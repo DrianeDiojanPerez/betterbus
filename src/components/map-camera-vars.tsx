@@ -14,9 +14,19 @@ export function MapCameraVars() {
 		if (!map) return;
 
 		const container = map.getContainer();
+		let pitch = "";
+		let bearing = "";
+
+		// A pan moves the map on every frame without turning or tilting it, and
+		// rewriting the variables would restyle every marker each time.
 		const sync = () => {
-			container.style.setProperty("--map-pitch", `${map.getPitch()}deg`);
-			container.style.setProperty("--map-bearing", `${map.getBearing()}deg`);
+			const nextPitch = `${map.getPitch()}deg`;
+			const nextBearing = `${map.getBearing()}deg`;
+
+			if (nextPitch !== pitch) container.style.setProperty("--map-pitch", (pitch = nextPitch));
+			if (nextBearing !== bearing) {
+				container.style.setProperty("--map-bearing", (bearing = nextBearing));
+			}
 		};
 
 		sync();
