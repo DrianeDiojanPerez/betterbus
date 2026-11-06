@@ -27,7 +27,13 @@ export function useBusTracks(
 			if (time - last >= FRAME_MS) {
 				last = time;
 				const now = Date.now();
-				setSnapshot({ tracks: tracker.tick(now), now });
+				const tracks = tracker.tick(now);
+				// With no buses to move, keep the old snapshot so nothing re-renders.
+				setSnapshot((previous) =>
+					tracks.length === 0 && previous.tracks.length === 0 && previous.now !== 0
+						? previous
+						: { tracks, now },
+				);
 			}
 			frame = requestAnimationFrame(loop);
 		};
