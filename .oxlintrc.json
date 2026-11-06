@@ -1,0 +1,79 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "plugins": ["typescript", "react", "import", "unicorn", "oxc"],
+    "jsPlugins": ["@shadcn/lint"],
+    "categories": {
+        "correctness": "error",
+        "suspicious": "error"
+    },
+    "env": {
+        "browser": true,
+        "es2024": true
+    },
+    "settings": {
+        "react": {
+            "version": "19"
+        }
+    },
+    "ignorePatterns": [
+        "node_modules",
+        "dist",
+        ".output",
+        ".tanstack",
+        ".nitro",
+        "src/routeTree.gen.ts"
+    ],
+    "rules": {
+        "react/react-in-jsx-scope": "off",
+        "react/set-state-in-effect": "error",
+        "unicorn/consistent-function-scoping": "off",
+        "shadcn/no-restyle": [
+            "error",
+            {
+                "allow": ["layout"],
+                "contracts": [
+                    {
+                        "pattern": "^MarkerContent$",
+                        "allow": ["layout", "preserve-3d"]
+                    }
+                ]
+            }
+        ],
+        "shadcn/no-raw-colors": "error",
+        "shadcn/no-arbitrary-values": [
+            "error",
+            {
+                "allow": ["layout"]
+            }
+        ],
+        "shadcn/no-inline-styles": "error",
+        "shadcn/require-static-classes": "error",
+        "shadcn/no-unknown-classes": "warn"
+    },
+    "overrides": [
+        {
+            "files": [
+                "src/components/ui/**",
+                "src/hooks/use-mobile.ts",
+                "src/lib/highlighter.tsx"
+            ],
+            "rules": {
+                "no-shadow": "off",
+                "no-underscore-dangle": "off",
+                "import/no-unassigned-import": "off",
+                "unicorn/no-array-sort": "off",
+                "unicorn/no-useless-fallback-in-spread": "off",
+                "react/no-unstable-nested-components": "off",
+                "react/set-state-in-effect": "off",
+                "react/refs": "off",
+                "react/immutability": "off",
+                "shadcn/no-restyle": "off",
+                "shadcn/no-raw-colors": "off",
+                "shadcn/no-arbitrary-values": "off",
+                "shadcn/no-inline-styles": "off",
+                "shadcn/no-unknown-classes": "off",
+                "shadcn/require-static-classes": "off"
+            }
+        }
+    ]
+}
