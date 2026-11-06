@@ -4,11 +4,12 @@ import { useMap } from "@/components/ui/map";
 import { cn } from "@/lib/utils";
 
 const TILT_DEG = 55;
+const MAX_TILT_DEG = 60;
 const EASE_MS = 600;
 
 /**
- * Keeps the map flat until asked. Right-drag tilts and rotates only while
- * 3D is on; turning it off eases the view back to flat and north-up.
+ * Keeps the map flat until asked. Right-drag always turns the map, and only
+ * tilts it while 3D is on; turning 3D off eases back to flat and north-up.
  */
 export function Map3dToggle({
 	enabled,
@@ -24,17 +25,26 @@ export function Map3dToggle({
 	useEffect(() => {
 		if (!map) return;
 
+		map.dragRotate.enable();
+		map.touchZoomRotate.enableRotation();
+		map.keyboard.enableRotation();
+
 		if (enabled) {
-			map.dragRotate.enable();
+			map.setMaxPitch(MAX_TILT_DEG);
 			map.touchPitch.enable();
-			map.touchZoomRotate.enableRotation();
-			map.keyboard.enableRotation();
-		} else {
-			map.dragRotate.disable();
-			map.touchPitch.disable();
-			map.touchZoomRotate.disableRotation();
-			map.keyboard.disableRotation();
+			return;
 		}
+
+		map.touchPitch.disable();
+		// Clamping now would cut the ease back to flat short.
+		const lockFlat = () => {
+			if (map.getPitch() === 0) map.setMaxPitch(0);
+		};
+		lockFlat();
+		map.on("moveend", lockFlat);
+		return () => {
+			map.off("moveend", lockFlat);
+		};
 	}, [map, enabled]);
 
 	const toggle = useCallback(() => {
@@ -60,7 +70,7 @@ export function Map3dToggle({
 				onClick={toggle}
 				aria-pressed={enabled}
 				aria-label={enabled ? "Turn 3D view off" : "Turn 3D view on"}
-				title={enabled ? "Back to flat map" : "Tilt and rotate with right-drag"}
+				title={enabled ? "Back to flat map" : "Tilt with right-drag"}
 				className={cn(
 					"flex size-11 items-center justify-center text-sm font-semibold transition-all active:scale-90",
 					"focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset",
