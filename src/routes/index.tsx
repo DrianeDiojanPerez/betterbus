@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Bus, ChevronRight, Gauge, LocateFixed, Navigation2, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
 import { Map3dToggle } from "@/components/map-3d-toggle";
@@ -69,6 +69,9 @@ const WALK_MPS = 1.35;
 const WALK_DETOUR = 1.3;
 const FALLBACK_ROUTE_COLOR = "#2563eb";
 const REVEAL_MS = 700;
+// Phones at 3x draw more than twice the pixels of 2x for little visible gain.
+const MAX_PIXEL_RATIO =
+	typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
 const ENTER = "animate-in fade-in duration-500";
 const ENTER_ZOOM = "animate-in fade-in zoom-in-50 duration-500";
 
@@ -81,7 +84,15 @@ function LiveMapPage() {
 	const { tracks, tracker, now } = useBusTracks(data, dataUpdatedAt);
 	// Until the first animation frame, show the buses where the server put them.
 	const buses = tracks.length > 0 ? tracks : (data?.buses ?? []).map(asParked);
-	const nextStopIds = new Set(buses.flatMap((bus) => (bus.nextStop ? [bus.nextStop.id] : [])));
+	const nextStopKey = buses
+		.flatMap((bus) => (bus.nextStop ? [bus.nextStop.id] : []))
+		.toSorted((a, b) => a - b)
+		.join(",");
+	// Rebuilt only when the set changes, so the route lines can skip animation ticks.
+	const nextStopIds = useMemo(
+		() => new Set(nextStopKey ? nextStopKey.split(",").map(Number) : []),
+		[nextStopKey],
+	);
 	const [selectedStopId, setSelectedStopId] = useState<number | null>(view.stop ?? null);
 	const [threeD, setThreeD] = useState((view.pitch ?? 0) > 0);
 	const [userPosition, setUserPosition] = useState<LngLat | null>(null);
@@ -133,6 +144,7 @@ function LiveMapPage() {
 				pitch={view.pitch ?? 0}
 				styles={mapStyles}
 				attributionControl={false}
+				pixelRatio={MAX_PIXEL_RATIO}
 				overlay={
 					<div className="absolute top-3 right-3 z-40 flex flex-col gap-2">
 						<MapControls
@@ -268,7 +280,7 @@ function asParked(bus: LiveBus): TrackedBus {
 // Stops sit under the bus cards, except the stop a bus is heading to, which
 // stays on top so it is never hidden by the card announcing it. The key
 // recreates the marker when its layer changes, since the class is set once.
-function RouteLine({
+const RouteLine = memo(function RouteLineView({
 	route,
 	selectedStopId,
 	nextStopIds,
@@ -283,7 +295,7 @@ function RouteLine({
 	threeD: boolean;
 	entering: boolean;
 }) {
-	const coordinates = route.geometry.map((point) => [point.lng, point.lat] as [number, number]);
+	const coordinates = useStableCoordinates(route.geometry);
 
 	return (
 		<>
@@ -316,6 +328,26 @@ function RouteLine({
 			})}
 		</>
 	);
+});
+
+// The feed sends fresh route objects on every poll. Handing the map the same
+// array while the line is unchanged spares it a full geometry upload.
+function useStableCoordinates(points: { lng: number; lat: number }[]): [number, number][] {
+	const [stable, setStable] = useState(() => toPairs(points));
+	const same =
+		stable.length === points.length &&
+		points.every((point, i) => stable[i][0] === point.lng && stable[i][1] === point.lat);
+
+	if (same) return stable;
+
+	const next = toPairs(points);
+	setStable(next);
+
+	return next;
+}
+
+function toPairs(points: { lng: number; lat: number }[]): [number, number][] {
+	return points.map((point) => [point.lng, point.lat]);
 }
 
 function StopDot({ selected, entering }: { selected: boolean; entering: boolean }) {
