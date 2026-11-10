@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Bus, ChevronRight, LocateFixed, Navigation2, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
+import { FollowBus } from "@/components/follow-bus";
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
 import { Map3dToggle } from "@/components/map-3d-toggle";
 import { MapCameraVars } from "@/components/map-camera-vars";
@@ -101,6 +102,8 @@ function LiveMapPage() {
 	const mapStyles = MAP_STYLE_PAIRS[settings.mapStyle];
 	const [selectedBusId, setSelectedBusId] = useState<number | null>(null);
 	const [busSheetOpen, setBusSheetOpen] = useState(false);
+	// Bumped on every request to follow a bus, so asking again flies there again.
+	const [followRequest, setFollowRequest] = useState<number | null>(null);
 	const selectedStop = findStop(routes, selectedStopId);
 	const selectedBus = buses.find((bus) => bus.bus.bus_id === selectedBusId) ?? null;
 	const stopsAhead =
@@ -127,15 +130,28 @@ function LiveMapPage() {
 	const handleLocate = useCallback((coords: { longitude: number; latitude: number }) => {
 		setUserPosition([coords.longitude, coords.latitude]);
 	}, []);
-	const openBus = useCallback((busId: number) => {
-		setSelectedBusId(busId);
-		setBusSheetOpen(true);
+	const followBus = useCallback(() => setFollowRequest((request) => (request ?? 0) + 1), []);
+	const unfollowBus = useCallback(() => setFollowRequest(null), []);
+	const openBus = useCallback(
+		(busId: number) => {
+			setSelectedBusId(busId);
+			setBusSheetOpen(true);
+			followBus();
+		},
+		[followBus],
+	);
+	const changeBusSheet = useCallback((open: boolean) => {
+		setBusSheetOpen(open);
+		if (!open) setFollowRequest(null);
 	}, []);
 	// The stop panel shares the left edge with the bus sheet, so one gives way.
-	const pickStop = useCallback((stopId: number) => {
-		setSelectedStopId(stopId);
-		setBusSheetOpen(false);
-	}, []);
+	const pickStop = useCallback(
+		(stopId: number) => {
+			setSelectedStopId(stopId);
+			changeBusSheet(false);
+		},
+		[changeBusSheet],
+	);
 
 	return (
 		<div className="relative h-dvh w-full">
@@ -208,8 +224,15 @@ function LiveMapPage() {
 					now={now}
 					color={selectedBus ? routeColor(routes, selectedBus.bus.route_id) : FALLBACK_ROUTE_COLOR}
 					open={busSheetOpen && selectedBus !== null}
-					onOpenChange={setBusSheetOpen}
+					onOpenChange={changeBusSheet}
 					onSelectStop={setSelectedStopId}
+					onFollow={followBus}
+					onUnfollow={unfollowBus}
+				/>
+				<FollowBus
+					position={selectedBus?.position ?? null}
+					request={busSheetOpen ? followRequest : null}
+					onRelease={unfollowBus}
 				/>
 			</Map>
 			<div
@@ -730,6 +753,8 @@ type BusPanelProps = {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onSelectStop: (stopId: number) => void;
+	onFollow: () => void;
+	onUnfollow: () => void;
 };
 
 const CLOSE_BUTTON =
@@ -831,6 +856,8 @@ function BusDetails({
 	now,
 	color,
 	onSelectStop,
+	onFollow,
+	onUnfollow,
 }: Omit<BusPanelProps, "tracked" | "open" | "onOpenChange"> & { tracked: TrackedBus }) {
 	const { map } = useMap();
 
@@ -901,6 +928,7 @@ function BusDetails({
 										<button
 											type="button"
 											onClick={() => {
+												onUnfollow();
 												onSelectStop(arrival.stop.id);
 												flyTo([arrival.stop.lng, arrival.stop.lat]);
 											}}
@@ -950,7 +978,7 @@ function BusDetails({
 				)}
 			</div>
 			<div className="flex shrink-0 flex-col p-4">
-				<Button size="lg" onClick={() => flyTo(tracked.position)}>
+				<Button size="lg" onClick={onFollow}>
 					<LocateFixed />
 					Show me this bus
 				</Button>
