@@ -288,4 +288,23 @@ describe("BusTracker", () => {
 		// Stop 1 is behind both buses on a one-way road, so nobody is arriving.
 		expect(tracker.arrivalsAt(1, T0)).toHaveLength(0);
 	});
+	it("slows down for a corner and speeds back up after it", () => {
+		// 400 m east, then a right-angle turn and 400 m north.
+		const corner = [
+			...Array.from({ length: 5 }, (_, i) => ({ lat: 17.5, lng: -88.19 + i * 0.00094 })),
+			...Array.from({ length: 4 }, (_, i) => ({ lat: 17.5 + (i + 1) * 0.0009, lng: -88.18624 })),
+		];
+		const turn: LngLat = [corner[4].lng, corner[4].lat];
+		const base = feed([bus({ lat: corner[0].lat, lng: corner[0].lng })]);
+		const tracker = new BusTracker();
+		tracker.update({ ...base, routes: [{ ...base.routes[0], geometry: corner, stops: [] }] }, T0);
+
+		const frames = run(tracker, T0, T0 + 60_000);
+		const near = frames.filter((frame) => haversineMeters(turn, frame.position) < 10);
+		const straight = frames.filter((frame) => haversineMeters(turn, frame.position) > 120);
+
+		expect(Math.min(...near.map((frame) => frame.speedMps))).toBeLessThan(5);
+		expect(Math.max(...straight.map((frame) => frame.speedMps))).toBeGreaterThan(9);
+		expect(frames.at(-1)?.position[1]).toBeGreaterThan(corner[6].lat);
+	});
 });

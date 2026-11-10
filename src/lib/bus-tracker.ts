@@ -36,9 +36,20 @@ const MIN_CATCH_UP_MPS = 2.5;
 const SLOW_WINDOW_M = 60;
 const MIN_SLOW_FACTOR = 0.25;
 const ACCEL_TAU_MS = 600;
+// A loaded bus pulls away gently, whether from a corner or a stop.
+const MAX_ACCEL_MPS2 = 1.5;
 // A fix this far from the marker is not a prediction error but a different
 // reading, so the marker jumps to it.
 const SNAP_M = 250;
+// Corners: the sideways pull a bus takes through a turn, the braking it uses
+// to get down to that pace, and how far ahead the driver looks for one.
+const CORNER_GRIP_MPS2 = 1.8;
+const CORNER_BRAKE_MPS2 = 1.2;
+const CORNER_LOOKAHEAD_M = 50;
+const CORNER_SAMPLE_M = 5;
+// Kinks smaller than this are noise in the road line, not corners.
+const MIN_CORNER_RAD = 0.2;
+const MIN_CORNER_MPS = 2.5;
 
 export type TrackedBus = {
 	bus: LiveBus;
@@ -120,13 +131,31 @@ function stopsAhead(
 		.toSorted((a, b) => a.meters - b.meters);
 }
 
+// The fastest the marker can go here and still take every turn just ahead.
+function cornerSpeedLimit(line: Polyline, arc: number): number {
+	let limit = Infinity;
+
+	for (let ahead = 0; ahead <= CORNER_LOOKAHEAD_M; ahead += CORNER_SAMPLE_M) {
+		const before = pointAtArc(line, arc + ahead - CORNER_SAMPLE_M).heading;
+		const after = pointAtArc(line, arc + ahead + CORNER_SAMPLE_M).heading;
+		const turn = (Math.abs(((after - before + 540) % 360) - 180) * Math.PI) / 180;
+		if (turn < MIN_CORNER_RAD) continue;
+
+		const radius = (2 * CORNER_SAMPLE_M) / turn;
+		const cornerSpeed = Math.max(MIN_CORNER_MPS, Math.sqrt(CORNER_GRIP_MPS2 * radius));
+		limit = Math.min(limit, Math.sqrt(cornerSpeed ** 2 + 2 * CORNER_BRAKE_MPS2 * ahead));
+	}
+
+	return limit;
+}
+
 /**
  * Keeps every bus moving between feed updates, and never backwards.
  *
  * Each update anchors a bus at the position and time the server reported.
  * From there the bus is simulated forward: at its reported speed, pausing at
  * stops it is braking for, rolling through stops it approaches fast. The
- * drawn marker chases that simulation with its own speed. Behind it, the
+ * drawn marker chases that simulation with its own speed, slowing for corners. Behind it, the
  * marker hurries; ahead of it, the marker slows and lets the simulation
  * catch up, so a late fix never drags the bus back down the road.
  */
@@ -321,8 +350,11 @@ export class BusTracker {
 				targetSpeed = prediction.speedMps * Math.max(MIN_SLOW_FACTOR, 1 + gap / SLOW_WINDOW_M);
 			}
 
+			targetSpeed = Math.min(targetSpeed, cornerSpeedLimit(line, track.displayedArc));
+
 			const blend = 1 - Math.exp((-dtSeconds * 1000) / ACCEL_TAU_MS);
-			track.displayedSpeedMps += (targetSpeed - track.displayedSpeedMps) * blend;
+			const change = (targetSpeed - track.displayedSpeedMps) * blend;
+			track.displayedSpeedMps += Math.min(change, MAX_ACCEL_MPS2 * dtSeconds);
 
 			const step = track.displayedSpeedMps * dtSeconds;
 			// Never overshoot a prediction that is standing still.
