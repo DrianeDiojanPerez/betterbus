@@ -350,10 +350,13 @@ function toPairs(points: { lng: number; lat: number }[]): [number, number][] {
 	return points.map((point) => [point.lng, point.lat]);
 }
 
+// The dots are too small for a fingertip, so an invisible ring around each
+// one takes the tap as well.
 function StopDot({ selected, entering }: { selected: boolean; entering: boolean }) {
 	return (
 		<div
 			className={cn(
+				"relative before:absolute before:-inset-4 before:rounded-full",
 				entering && ENTER_ZOOM,
 				selected
 					? "size-5 rounded-full border-2 border-background bg-stop-active shadow-md ring-2 ring-stop-active/40"
@@ -385,7 +388,7 @@ function StopPin({ selected, entering }: { selected: boolean; entering: boolean 
 			/>
 			<div
 				className={cn(
-					"absolute top-1/2 left-1/2 face-camera rounded-full shadow-md ring-2 ring-background",
+					"absolute top-1/2 left-1/2 face-camera rounded-full shadow-md ring-2 ring-background before:absolute before:-inset-3 before:rounded-full",
 					selected
 						? "-mt-3 -ml-3 size-6 bg-stop-active ring-stop-active/40 [--lift:26px]"
 						: "-mt-2 -ml-2 size-4 bg-stop [--lift:20px]",
