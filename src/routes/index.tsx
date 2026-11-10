@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Bus, ChevronRight, Gauge, LocateFixed, Navigation2, X } from "lucide-react";
+import { Bus, ChevronRight, LocateFixed, Navigation2, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
@@ -8,6 +8,7 @@ import { Map3dToggle } from "@/components/map-3d-toggle";
 import { MapCameraVars } from "@/components/map-camera-vars";
 import { MapMissingImages } from "@/components/map-missing-images";
 import { MapSettings } from "@/components/map-settings";
+import { SpeedGauge } from "@/components/speed-gauge";
 import { Button } from "@/components/ui/button";
 import {
 	Map,
@@ -840,6 +841,13 @@ function BusDetails({
 	return (
 		<>
 			<div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pt-1 pb-5">
+				<section className="flex flex-col gap-3">
+					<h3 className="text-xs font-semibold text-muted-foreground uppercase">About this bus</h3>
+					<SpeedGauge kmh={tracked.speedMps * 3.6} color={color} stale={tracked.stale} />
+					{tracked.bus.driver_name ? (
+						<p className="text-xs text-muted-foreground">Driver: {tracked.bus.driver_name}</p>
+					) : null}
+				</section>
 				{settling ? (
 					<StopsAheadSkeleton />
 				) : stopsAhead.length > 0 ? (
@@ -940,15 +948,6 @@ function BusDetails({
 						This bus is off its route right now, so there is no stop list.
 					</p>
 				)}
-				<section className="flex flex-col gap-3">
-					<h3 className="text-xs font-semibold text-muted-foreground uppercase">About this bus</h3>
-					<StatTile icon={<Gauge />} label="Speed">
-						{Math.round(tracked.speedMps * 3.6)} km/h
-					</StatTile>
-					{tracked.bus.driver_name ? (
-						<p className="text-xs text-muted-foreground">Driver: {tracked.bus.driver_name}</p>
-					) : null}
-				</section>
 			</div>
 			<div className="flex shrink-0 flex-col p-4">
 				<Button size="lg" onClick={() => flyTo(tracked.position)}>
@@ -1011,28 +1010,6 @@ function BusHero({
 			) : (
 				<p className="relative mt-5 text-lg font-semibold">Off its route right now</p>
 			)}
-		</div>
-	);
-}
-
-function StatTile({
-	icon,
-	label,
-	children,
-}: {
-	icon: React.ReactNode;
-	label: string;
-	children: React.ReactNode;
-}) {
-	return (
-		<div className="flex items-center gap-3 rounded-2xl bg-foreground/5 p-3">
-			<span className="grid size-9 shrink-0 place-items-center rounded-xl bg-foreground/5 text-muted-foreground [&>svg]:size-4">
-				{icon}
-			</span>
-			<span className="flex min-w-0 flex-col">
-				<span className="text-xs text-muted-foreground">{label}</span>
-				<span className="truncate font-semibold">{children}</span>
-			</span>
 		</div>
 	);
 }
