@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 
 import { matchRouteToRoads } from "./road-match";
+import { fixRouteLine } from "./route-fixes";
 
 export type LatLng = { lat: number; lng: number };
 
@@ -74,7 +75,7 @@ function startRoadMatch(key: string, route: BusRoute): RoadGeometryEntry {
 
 	matchRouteToRoads(route.geometry).then(
 		(geometry) => {
-			entry.matched = geometry;
+			entry.matched = fixRouteLine(geometry);
 		},
 		(error: unknown) => {
 			console.warn(`Road match failed for route ${route.id}; using feed geometry.`, error);
@@ -97,7 +98,7 @@ function withRoadGeometry(route: BusRoute): BusRoute {
 		entry = startRoadMatch(key, route);
 	}
 
-	return entry.matched ? { ...route, geometry: entry.matched } : route;
+	return { ...route, geometry: entry.matched ?? fixRouteLine(route.geometry) };
 }
 
 async function fetchLiveMap(): Promise<LiveMap> {
