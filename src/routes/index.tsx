@@ -631,7 +631,8 @@ function useCardSide(screenHeading: number): "left" | "right" {
 	return side;
 }
 
-// Rides beside the bus with what a rider wants at a glance.
+// Rides beside the bus as a small pill with its name and speed. Hovering
+// springs it open to the next stop and the arrival time.
 function BusCard({
 	tracked,
 	color,
@@ -646,35 +647,67 @@ function BusCard({
 	return (
 		<div
 			className={cn(
-				"flex w-56 cursor-pointer flex-col rounded-2xl px-3.5 py-2.5 text-xs text-foreground glass transition-all hover:brightness-105 active:scale-95",
+				"group flex w-max cursor-pointer flex-col rounded-2xl px-3 py-1.5 text-xs text-foreground glass transition-morph delay-75 spring-reverse hover:rounded-3xl hover:px-3.5 hover:py-2.5 hover:brightness-105 hover:delay-0 hover:spring active:scale-95",
 				entering && "animate-in duration-500 zoom-in-95 fade-in",
 			)}
 			style={{ "--bus-color": color } as React.CSSProperties}
 		>
-			<div className="flex items-center gap-1.5">
+			<div className="flex items-center gap-2">
 				<span
 					className={cn(
 						"size-2.5 shrink-0 rounded-full",
 						stale ? "bg-muted-foreground/50" : "bg-(--bus-color)",
 					)}
 				/>
-				<span className="truncate text-sm font-semibold">{bus.bus_name}</span>
-				<ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
-			</div>
-			<span className="text-muted-foreground">{busStatus(tracked)}</span>
-			{nextStop ? (
-				<div className="mt-1.5 flex flex-col">
-					<span className="text-muted-foreground uppercase">Next stop</span>
-					<span className="leading-snug font-medium">{nextStop.name}</span>
-					<span className="text-sm font-semibold tabular-nums" suppressHydrationWarning>
-						{arrivalLabel(etaSeconds, stale)}
+				<div className="flex min-w-0 flex-col leading-tight">
+					<div className="flex items-baseline">
+						<span className="truncate text-sm font-semibold">{bus.bus_name}</span>
+						<span className="grid grid-cols-[0fr] transition-unfold delay-75 spring-reverse group-hover:grid-cols-[1fr] group-hover:delay-0 group-hover:spring">
+							<span
+								aria-hidden
+								className="min-w-0 overflow-hidden pl-1.5 whitespace-nowrap text-muted-foreground tabular-nums opacity-0 transition-reveal delay-75 spring-reverse group-hover:opacity-100 group-hover:delay-0 group-hover:spring"
+							>
+								{speedLabel(tracked)}
+							</span>
+						</span>
+					</div>
+					<span className="grid grid-rows-[1fr] transition-unfold delay-75 spring-reverse group-hover:grid-rows-[0fr] group-hover:delay-0 group-hover:spring">
+						<span className="min-h-0 overflow-hidden text-muted-foreground tabular-nums transition-reveal delay-75 spring-reverse group-hover:opacity-0 group-hover:delay-0 group-hover:spring">
+							{speedLabel(tracked)}
+						</span>
 					</span>
 				</div>
-			) : (
-				<span className="mt-1.5 text-muted-foreground">Not on its route right now</span>
-			)}
+				<ChevronRight className="ml-auto h-3.5 w-0 shrink-0 text-muted-foreground opacity-0 transition-reveal delay-75 spring-reverse group-hover:w-3.5 group-hover:opacity-100 group-hover:delay-0 group-hover:spring" />
+			</div>
+			<div className="grid grid-cols-[0fr] grid-rows-[0fr] transition-unfold delay-75 spring-reverse group-hover:grid-cols-[1fr] group-hover:grid-rows-[1fr] group-hover:delay-0 group-hover:spring">
+				<div className="min-h-0 min-w-0 overflow-hidden">
+					<div className="flex w-48 scale-95 flex-col pt-1.5 opacity-0 blur-sm transition-reveal spring-reverse group-hover:scale-100 group-hover:opacity-100 group-hover:blur-none group-hover:delay-75 group-hover:spring">
+						{nextStop ? (
+							<>
+								<span className="text-muted-foreground uppercase">Next stop</span>
+								<span className="leading-snug font-medium">{nextStop.name}</span>
+								<span className="text-sm font-semibold tabular-nums" suppressHydrationWarning>
+									{arrivalLabel(etaSeconds, stale)}
+								</span>
+							</>
+						) : (
+							<span className="text-muted-foreground">Not on its route right now</span>
+						)}
+					</div>
+				</div>
+			</div>
 		</div>
 	);
+}
+
+function speedLabel({ stale, dwelling, speedMps }: TrackedBus): string {
+	const kmh = Math.round(speedMps * 3.6);
+
+	if (stale) return "No signal";
+	if (dwelling) return "At a stop";
+	if (kmh === 0) return "Stopped";
+
+	return `${kmh} km/h`;
 }
 
 function busStatus({ stale, dwelling, speedMps }: TrackedBus): string {
