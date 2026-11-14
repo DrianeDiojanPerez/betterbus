@@ -243,6 +243,8 @@ type MapProps = {
 	onViewportChange?: (viewport: MapViewport) => void;
 	/** Show a loading indicator on the map */
 	loading?: boolean;
+	/** Set to false when the page draws its own loader over the map */
+	loader?: boolean;
 	/**
 	 * Controls that render before the map exists, including on the server.
 	 * They must handle `map` being null until it loads.
@@ -293,6 +295,7 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
 		viewport,
 		onViewportChange,
 		loading = false,
+		loader = true,
 		overlay,
 		...props
 	},
@@ -486,7 +489,7 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
 	return (
 		<MapContext.Provider value={contextValue}>
 			<div ref={containerRef} className={cn("relative h-full w-full", className)}>
-				{showLoader || !loaderGone ? (
+				{loader && (showLoader || !loaderGone) ? (
 					<DefaultLoader visible={showLoader} onHidden={() => setLoaderGone(true)} />
 				) : null}
 				{overlay}
