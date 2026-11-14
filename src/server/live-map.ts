@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 
+import savedLines from "./road-geometry.json";
 import { matchRouteToRoads } from "./road-match";
 import { fixRouteLine } from "./route-fixes";
 
@@ -59,9 +60,15 @@ const ROAD_MATCH_RETRY_MS = 10 * 60 * 1000;
 
 type RoadGeometryEntry = { matched: LatLng[] | null; expiresAt: number | null };
 
-// Matched once per route per process. A failed match keeps the feed's own
-// line for a while instead of asking the router again on every poll.
-const roadGeometry = new Map<string, RoadGeometryEntry>();
+// Starts from a saved snapshot of the matched lines. A route the feed has
+// changed since is matched again, once per process. A failed match keeps the
+// feed's own line for a while instead of asking the router again on every poll.
+const roadGeometry = new Map<string, RoadGeometryEntry>(
+	Object.entries(savedLines as Record<string, LatLng[]>).map(([key, line]) => [
+		key,
+		{ matched: fixRouteLine(line), expiresAt: null },
+	]),
+);
 
 function roadGeometryKey(route: BusRoute): string {
 	const first = route.geometry.at(0);
