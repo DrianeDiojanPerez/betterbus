@@ -24,6 +24,9 @@ export type BusRoute = {
 	color: string;
 	geometry: LatLng[];
 	stops: BusStop[];
+	geometry_key?: string;
+	/** True once `geometry` follows the streets, not the feed's rough trace. */
+	road_matched?: boolean;
 };
 
 export type LiveBus = {
@@ -105,7 +108,12 @@ function withRoadGeometry(route: BusRoute): BusRoute {
 		entry = startRoadMatch(key, route);
 	}
 
-	return { ...route, geometry: entry.matched ?? fixRouteLine(route.geometry) };
+	return {
+		...route,
+		geometry: entry.matched ?? fixRouteLine(route.geometry),
+		geometry_key: key,
+		road_matched: entry.matched !== null,
+	};
 }
 
 async function fetchLiveMap(): Promise<LiveMap> {
