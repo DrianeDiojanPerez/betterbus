@@ -672,7 +672,8 @@ function BusCard({
 		<div
 			className={cn(
 				"group flex w-max cursor-pointer flex-col rounded-2xl px-3 py-1.5 text-xs text-foreground glass transition-morph delay-75 spring-reverse hover:rounded-3xl hover:px-3.5 hover:py-2.5 hover:brightness-105 hover:delay-0 hover:spring active:scale-95",
-				entering && "animate-in duration-500 zoom-in-95 fade-in",
+				// The hover delay also delays this fade, so hold the faded-out start until it runs.
+				entering && "animate-in duration-500 fill-mode-backwards zoom-in-95 fade-in",
 			)}
 			style={{ "--bus-color": color } as React.CSSProperties}
 		>
