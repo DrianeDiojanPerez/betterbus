@@ -4,6 +4,7 @@ import { Bus, ChevronRight, LocateFixed, Navigation2, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { FollowBus } from "@/components/follow-bus";
+import { MapFirstDraw } from "@/components/map-first-draw";
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
 import { Map3dToggle } from "@/components/map-3d-toggle";
 import { MapCameraVars } from "@/components/map-camera-vars";
@@ -119,10 +120,14 @@ function LiveMapPage() {
 	const choice =
 		hydrated && !startView ? chooseStartView(view, lastView, data, error !== null) : null;
 	if (choice) setStartView(choice);
+	// The loader stays up until the route and the buses are on the map.
+	const [mapShown, setMapShown] = useState(false);
 	const routes = data?.routes ?? [];
 	const { tracks, tracker, now } = useBusTracks(data, dataUpdatedAt);
 	// Until the first animation frame, show the buses where the server put them.
-	const buses = tracks.length > 0 ? tracks : (data?.buses ?? []).map(asParked);
+	const parked = tracks.length > 0 ? tracks : (data?.buses ?? []).map(asParked);
+	// Behind the loader the buses would visibly hop from the server's spot onto the route.
+	const buses = now === 0 ? [] : parked;
 	const nextStopKey = buses
 		.flatMap((bus) => (bus.nextStop ? [bus.nextStop.id] : []))
 		.toSorted((a, b) => a - b)
@@ -197,6 +202,9 @@ function LiveMapPage() {
 					center={startView.center}
 					zoom={startView.zoom}
 					bearing={startView.bearing}
+					// The page's loader covers it. The map's own sits under the glass bus cards, and
+					// removing it makes them blink as Chrome redraws their blur.
+					loader={false}
 					pitch={view.pitch ?? 0}
 					styles={mapStyles}
 					attributionControl={false}
@@ -271,6 +279,7 @@ function LiveMapPage() {
 						onFollow={followBus}
 						onUnfollow={unfollowBus}
 					/>
+					<MapFirstDraw ready={!settling} onDrawn={() => setMapShown(true)} />
 					<FollowBus
 						position={selectedBus?.position ?? null}
 						request={busSheetOpen ? followRequest : null}
@@ -279,10 +288,14 @@ function LiveMapPage() {
 				</Map>
 			) : null}
 			<div
-				aria-hidden={data !== undefined}
+				aria-hidden={mapShown}
 				className={cn(
-					"pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/60 transition-opacity duration-700",
-					data ? "opacity-0" : "opacity-100",
+					// Kept on its own layer: when it drops off at the end of the fade, Chrome redraws the
+					// glass cards under it and they flash.
+					"absolute inset-0 z-50 flex transform-gpu items-center justify-center bg-background/60 transition-opacity duration-700",
+					mapShown ? "opacity-0" : "opacity-100",
+					// Holds the map still until the buses are on it, unless the feed is down.
+					mapShown || error !== null ? "pointer-events-none" : "touch-none",
 				)}
 			>
 				<div className="flex gap-1 loading-dots">
