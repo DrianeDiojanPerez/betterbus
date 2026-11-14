@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Bus, ChevronRight, LocateFixed, Navigation2, X } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { FollowBus } from "@/components/follow-bus";
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
@@ -9,6 +9,7 @@ import { Map3dToggle } from "@/components/map-3d-toggle";
 import { MapCameraVars } from "@/components/map-camera-vars";
 import { MapMissingImages } from "@/components/map-missing-images";
 import { MapSettings } from "@/components/map-settings";
+import { MapViewMemory, savedView, shows, type SavedView } from "@/components/map-view-memory";
 import { SpeedGauge } from "@/components/speed-gauge";
 import { Button } from "@/components/ui/button";
 import {
@@ -42,7 +43,7 @@ import { haversineMeters, type LngLat } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 import { liveMapQueryOptions } from "@/lib/live-map";
 import { MAP_STYLE_PAIRS, useSettings } from "@/lib/settings";
-import type { BusRoute, BusStop, LiveBus } from "@/server/live-map";
+import type { BusRoute, BusStop, LiveBus, LiveMap } from "@/server/live-map";
 
 type ViewSearch = { lng?: number; lat?: number; zoom?: number; pitch?: number; stop?: number };
 
@@ -77,11 +78,47 @@ const MAX_PIXEL_RATIO =
 const ENTER = "animate-in fade-in duration-500";
 const ENTER_ZOOM = "animate-in fade-in zoom-in-50 duration-500";
 
+type StartView = { center: LngLat; zoom: number; bearing: number };
+
+const WHOLE_ROUTE: StartView = { center: BELIZE_CITY, zoom: DEFAULT_ZOOM, bearing: 0 };
+
+/**
+ * Where the map opens. The last visit's view comes back only if a bus is in
+ * it, which needs the first feed; until then there is no answer yet.
+ */
+function chooseStartView(
+	view: ViewSearch,
+	last: SavedView | null,
+	feed: LiveMap | undefined,
+	feedDown: boolean,
+): StartView | null {
+	if (view.lng !== undefined && view.lat !== undefined) {
+		return { center: [view.lng, view.lat], zoom: view.zoom ?? DEFAULT_ZOOM, bearing: 0 };
+	}
+	if (!last) return WHOLE_ROUTE;
+	if (feed) return feed.buses.some((bus) => shows(last, [bus.lng, bus.lat])) ? last : WHOLE_ROUTE;
+
+	// No buses to check against, so trust the last visit.
+	return feedDown ? last : null;
+}
+
+const noSubscribe = () => () => {};
+
 function LiveMapPage() {
 	const { data, dataUpdatedAt, error } = useQuery(liveMapQueryOptions());
 	const view = Route.useSearch();
-	const center: [number, number] =
-		view.lng !== undefined && view.lat !== undefined ? [view.lng, view.lat] : BELIZE_CITY;
+	const [lastView] = useState(savedView);
+	// The saved view lives in the browser, so the server leaves the map out.
+	const hydrated = useSyncExternalStore(
+		noSubscribe,
+		() => true,
+		() => false,
+	);
+	// Picked once, before the map exists, so it opens in place instead of jumping.
+	const [startView, setStartView] = useState<StartView | null>(null);
+	const choice =
+		hydrated && !startView ? chooseStartView(view, lastView, data, error !== null) : null;
+	if (choice) setStartView(choice);
 	const routes = data?.routes ?? [];
 	const { tracks, tracker, now } = useBusTracks(data, dataUpdatedAt);
 	// Until the first animation frame, show the buses where the server put them.
@@ -155,86 +192,92 @@ function LiveMapPage() {
 
 	return (
 		<div className="relative h-dvh w-full">
-			<Map
-				center={center}
-				zoom={view.zoom ?? DEFAULT_ZOOM}
-				pitch={view.pitch ?? 0}
-				styles={mapStyles}
-				attributionControl={false}
-				pixelRatio={MAX_PIXEL_RATIO}
-				overlay={
-					<div className="absolute top-3 right-3 z-40 flex flex-col gap-2">
-						<MapControls
-							position="top-right"
-							showCompass
-							showLocate
-							showFullscreen
-							onLocate={handleLocate}
-							className="static top-auto right-auto"
+			{startView ? (
+				<Map
+					center={startView.center}
+					zoom={startView.zoom}
+					bearing={startView.bearing}
+					pitch={view.pitch ?? 0}
+					styles={mapStyles}
+					attributionControl={false}
+					pixelRatio={MAX_PIXEL_RATIO}
+					overlay={
+						<div className="absolute top-3 right-3 z-40 flex flex-col gap-2">
+							<MapControls
+								position="top-right"
+								showCompass
+								showLocate
+								showFullscreen
+								onLocate={handleLocate}
+								className="static top-auto right-auto"
+							/>
+							<Map3dToggle enabled={threeD} onEnabledChange={setThreeD} />
+							<MapSettings />
+						</div>
+					}
+				>
+					<MapCameraVars />
+					<MapViewMemory />
+					<MapMissingImages />
+					{routes.map((route) => (
+						<RouteLine
+							key={route.id}
+							route={route}
+							selectedStopId={selectedStopId}
+							nextStopIds={nextStopIds}
+							onSelectStop={pickStop}
+							threeD={threeD}
+							entering={entering}
 						/>
-						<Map3dToggle enabled={threeD} onEnabledChange={setThreeD} />
-						<MapSettings />
-					</div>
-				}
-			>
-				<MapCameraVars />
-				<MapMissingImages />
-				{routes.map((route) => (
-					<RouteLine
-						key={route.id}
-						route={route}
-						selectedStopId={selectedStopId}
-						nextStopIds={nextStopIds}
-						onSelectStop={pickStop}
-						threeD={threeD}
-						entering={entering}
+					))}
+					{nextArrival && nextArrival.path.length > 1 ? (
+						<MapRoute
+							id="road-ahead"
+							coordinates={nextArrival.path}
+							color={routeColor(routes, nextArrival.bus.route_id)}
+							width={8}
+							opacity={1}
+						/>
+					) : null}
+					{userPosition ? (
+						<MapMarker longitude={userPosition[0]} latitude={userPosition[1]}>
+							<MarkerContent>
+								<div className="size-4 animate-in rounded-full bg-here ring-4 ring-here/30 duration-500 zoom-in-50 fade-in" />
+							</MarkerContent>
+							<MarkerTooltip>You are here</MarkerTooltip>
+						</MapMarker>
+					) : null}
+					{buses.map((bus) => (
+						<BusMarker
+							key={bus.bus.bus_id}
+							tracked={bus}
+							threeD={threeD}
+							entering={entering}
+							color={routeColor(routes, bus.bus.route_id)}
+							onOpen={openBus}
+						/>
+					))}
+					<BusPanel
+						tracked={selectedBus}
+						stopsAhead={stopsAhead}
+						settling={settling}
+						now={now}
+						color={
+							selectedBus ? routeColor(routes, selectedBus.bus.route_id) : FALLBACK_ROUTE_COLOR
+						}
+						open={busSheetOpen && selectedBus !== null}
+						onOpenChange={changeBusSheet}
+						onSelectStop={setSelectedStopId}
+						onFollow={followBus}
+						onUnfollow={unfollowBus}
 					/>
-				))}
-				{nextArrival && nextArrival.path.length > 1 ? (
-					<MapRoute
-						id="road-ahead"
-						coordinates={nextArrival.path}
-						color={routeColor(routes, nextArrival.bus.route_id)}
-						width={8}
-						opacity={1}
+					<FollowBus
+						position={selectedBus?.position ?? null}
+						request={busSheetOpen ? followRequest : null}
+						onRelease={unfollowBus}
 					/>
-				) : null}
-				{userPosition ? (
-					<MapMarker longitude={userPosition[0]} latitude={userPosition[1]}>
-						<MarkerContent>
-							<div className="size-4 animate-in rounded-full bg-here ring-4 ring-here/30 duration-500 zoom-in-50 fade-in" />
-						</MarkerContent>
-						<MarkerTooltip>You are here</MarkerTooltip>
-					</MapMarker>
-				) : null}
-				{buses.map((bus) => (
-					<BusMarker
-						key={bus.bus.bus_id}
-						tracked={bus}
-						threeD={threeD}
-						entering={entering}
-						color={routeColor(routes, bus.bus.route_id)}
-						onOpen={openBus}
-					/>
-				))}
-				<BusPanel
-					tracked={selectedBus}
-					stopsAhead={stopsAhead}
-					settling={settling}
-					now={now}
-					color={selectedBus ? routeColor(routes, selectedBus.bus.route_id) : FALLBACK_ROUTE_COLOR}
-					open={busSheetOpen && selectedBus !== null}
-					onOpenChange={changeBusSheet}
-					onSelectStop={setSelectedStopId}
-					onFollow={followBus}
-					onUnfollow={unfollowBus}
-				/>
-				<FollowBus
-					position={selectedBus?.position ?? null}
-					request={busSheetOpen ? followRequest : null}
-					onRelease={unfollowBus}
-				/>
-			</Map>
+				</Map>
+			) : null}
 			<div
 				aria-hidden={data !== undefined}
 				className={cn(
