@@ -1,21 +1,44 @@
-# TanStack Start + shadcn/ui
+<p align="center"><img src="public/logo512.png" alt="E-Bus" width="128"></p>
 
-This is a template for a new TanStack Start project with React, TypeScript, and shadcn/ui.
+<h3 align="center">E-Bus: a live map of the electric buses in Belize City</h3>
 
-## Adding components
+- [Run it](#run-it)
+- [The bus feed](#the-bus-feed)
+- [Check your work](#check-your-work)
+- [Docs](#docs)
 
-To add components to your app, run the following command:
+## Run it
 
-```bash
-npx shadcn@latest add button
+```
+npm install
+cp .env.example .env
+npm run dev
 ```
 
-This will place the ui components in the `components` directory.
+Then open http://localhost:3000.
 
-## Using components
+## The bus feed
 
-To use the components in your app, import them as follows:
+The app reads the buses from one URL, set as `LIVE_MAP_FEED_URL` in `.env`:
 
-```tsx
-import { Button } from "@/components/ui/button";
+- **Real feed:** `https://bus.techtingz.bz/live-map/data`. This is also what you get when the line is left out.
+- **Replay feed:** `http://localhost:4545/live-map/data`, for when the buses are off. Start it in its own terminal with `node ~/bus-recordings/replay-feed.mjs`.
+
+Restart `npm run dev` after you change `.env`.
+
+## Check your work
+
 ```
+npm run typecheck
+npm run lint
+npm run check
+npm test
+```
+
+## Docs
+
+- [How it works](docs/how-it-works.md): the feed, the server functions, and how the map draws buses and roads
+- [Commands](docs/commands.md): every `npm run` script
+- [Replaying a recorded day](docs/replay.md)
+- [Project layout](docs/layout.md): where things live
+- [Troubleshooting](docs/troubleshooting.md)
