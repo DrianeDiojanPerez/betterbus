@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 
 import savedLines from "./road-geometry.json";
+import routeSnapshot from "./route-snapshot.json";
 import { matchRouteToRoads } from "./road-match";
 import { fixRouteLine } from "./route-fixes";
 
@@ -145,3 +146,9 @@ export const getLiveMap = createServerFn({ method: "GET" }).handler((): Promise<
 
 	return inFlight;
 });
+
+// The routes and stops as last saved, so the map can draw them without
+// waiting seconds for the bus company's server. The feed replaces them.
+export const getSavedRoutes = createServerFn({ method: "GET" }).handler((): BusRoute[] =>
+	(routeSnapshot as BusRoute[]).map(withRoadGeometry),
+);
