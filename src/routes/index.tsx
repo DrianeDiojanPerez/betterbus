@@ -1,10 +1,22 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Bus, ChevronRight, LocateFixed, Navigation2, X } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { Bus, BusFront, ChevronRight, LocateFixed, Navigation2, X } from "lucide-react";
+import {
+	memo,
+	useCallback,
+	useEffect,
+	useEffectEvent,
+	useMemo,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
+import { TextMorph } from "torph/react";
 
 import { FollowBus } from "@/components/follow-bus";
 import { MapFirstDraw } from "@/components/map-first-draw";
+import { PanelGlass } from "@/components/panel-glass";
+import { RoadAhead } from "@/components/road-ahead";
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
 import { Map3dToggle } from "@/components/map-3d-toggle";
 import { MapCameraVars } from "@/components/map-camera-vars";
@@ -13,6 +25,19 @@ import { MapSettings } from "@/components/map-settings";
 import { MapViewMemory, savedView, shows, type SavedView } from "@/components/map-view-memory";
 import { SpeedGauge } from "@/components/speed-gauge";
 import { Button } from "@/components/ui/button";
+import {
+	Empty,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "@/components/ui/empty";
+import {
+	Carousel,
+	CarouselContent,
+	CarouselItem,
+	type CarouselApi,
+} from "@/components/ui/carousel";
 import {
 	Map,
 	MapControls,
@@ -39,11 +64,13 @@ import {
 import { useMapBearing } from "@/hooks/use-map-bearing";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useBusTracks } from "@/hooks/use-bus-tracks";
-import type { StopArrival, TrackedBus } from "@/lib/bus-tracker";
+import type { BusTracker, StopArrival, TrackedBus } from "@/lib/bus-tracker";
 import { haversineMeters, type LngLat } from "@/lib/geo";
+import type { Map as MapLibreMap } from "maplibre-gl";
+import { haptic } from "@/lib/haptics";
 import { cn } from "@/lib/utils";
-import { liveMapQueryOptions } from "@/lib/live-map";
-import { MAP_STYLE_PAIRS, useSettings } from "@/lib/settings";
+import { liveMapQueryOptions, savedRoutesQueryOptions } from "@/lib/live-map";
+import { MAP_STYLE_PAIRS, useLiquidGlass, usePanelTheme, useSettings } from "@/lib/settings";
 import type { BusRoute, BusStop, LiveBus, LiveMap } from "@/server/live-map";
 
 type ViewSearch = { lng?: number; lat?: number; zoom?: number; pitch?: number; stop?: number };
@@ -73,6 +100,22 @@ const WALK_MPS = 1.35;
 const WALK_DETOUR = 1.3;
 const FALLBACK_ROUTE_COLOR = "#2563eb";
 const REVEAL_MS = 700;
+// How close an opened stop card may sit to the edge of the map.
+const CARD_MARGIN = 12;
+// Lifts a stop's hover label above the 3D pin's ball instead of over it.
+const STOP_PIN_TOOLTIP_OFFSET = 32;
+// Matches the stop card's closing transition in styles.css.
+const STOP_CARD_CLOSE_MS = 300;
+// The stop card's size, with room for a later bus, and how far it sits from its stop.
+const STOP_CARD_WIDTH = 288;
+const STOP_CARD_HEIGHT = 170;
+const STOP_CARD_GAP = 16;
+const STOP_CARD_GAP_3D = 40;
+// How far the bus moves before its road to the stop and the gap in the route
+// line are redrawn. Each redraw re-slices the whole line in MapLibre's worker.
+const ROAD_STEP_M = 5;
+// How often a bus card's speed may change.
+const SPEED_LABEL_MS = 1000;
 // Phones at 3x draw more than twice the pixels of 2x for little visible gain.
 const MAX_PIXEL_RATIO =
 	typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
@@ -84,29 +127,29 @@ type StartView = { center: LngLat; zoom: number; bearing: number };
 const WHOLE_ROUTE: StartView = { center: BELIZE_CITY, zoom: DEFAULT_ZOOM, bearing: 0 };
 
 /**
- * Where the map opens. The last visit's view comes back only if a bus is in
- * it, which needs the first feed; until then there is no answer yet.
+ * Where the map opens. The last visit's view comes back unless the buses we
+ * know of are all outside it. With no buses to check against, it is trusted.
  */
 function chooseStartView(
 	view: ViewSearch,
 	last: SavedView | null,
 	feed: LiveMap | undefined,
-	feedDown: boolean,
-): StartView | null {
+): StartView {
 	if (view.lng !== undefined && view.lat !== undefined) {
 		return { center: [view.lng, view.lat], zoom: view.zoom ?? DEFAULT_ZOOM, bearing: 0 };
 	}
 	if (!last) return WHOLE_ROUTE;
-	if (feed) return feed.buses.some((bus) => shows(last, [bus.lng, bus.lat])) ? last : WHOLE_ROUTE;
+	if (!feed?.buses.length) return last;
 
-	// No buses to check against, so trust the last visit.
-	return feedDown ? last : null;
+	return feed.buses.some((bus) => shows(last, [bus.lng, bus.lat])) ? last : WHOLE_ROUTE;
 }
 
 const noSubscribe = () => () => {};
 
 function LiveMapPage() {
+	const panelTheme = usePanelTheme();
 	const { data, dataUpdatedAt, error } = useQuery(liveMapQueryOptions());
+	const { data: savedRoutes } = useQuery(savedRoutesQueryOptions());
 	const view = Route.useSearch();
 	const [lastView] = useState(savedView);
 	// The saved view lives in the browser, so the server leaves the map out.
@@ -117,12 +160,13 @@ function LiveMapPage() {
 	);
 	// Picked once, before the map exists, so it opens in place instead of jumping.
 	const [startView, setStartView] = useState<StartView | null>(null);
-	const choice =
-		hydrated && !startView ? chooseStartView(view, lastView, data, error !== null) : null;
+	const choice = hydrated && !startView ? chooseStartView(view, lastView, data) : null;
 	if (choice) setStartView(choice);
-	// The loader stays up until the route and the buses are on the map.
+	// The loader is solid until the map, route and stops have all drawn, so they
+	// appear together, then see-through until the buses arrive.
 	const [mapShown, setMapShown] = useState(false);
-	const routes = data?.routes ?? [];
+	const feedShown = mapShown && (data !== undefined || error !== null);
+	const routes = data?.routes ?? savedRoutes ?? [];
 	const { tracks, tracker, now } = useBusTracks(data, dataUpdatedAt);
 	// Until the first animation frame, show the buses where the server put them.
 	const parked = tracks.length > 0 ? tracks : (data?.buses ?? []).map(asParked);
@@ -138,6 +182,12 @@ function LiveMapPage() {
 		[nextStopKey],
 	);
 	const [selectedStopId, setSelectedStopId] = useState<number | null>(view.stop ?? null);
+	// Which of the stop's coming buses its card is showing, kept with the stop
+	// it belongs to so it never carries over to another one.
+	const [stopCardBus, setStopCardBus] = useState<{ stopId: number; busId: number | null } | null>(
+		null,
+	);
+	const stopCardBusId = stopCardBus?.stopId === selectedStopId ? stopCardBus.busId : null;
 	const [threeD, setThreeD] = useState((view.pitch ?? 0) > 0);
 	const [userPosition, setUserPosition] = useState<LngLat | null>(null);
 	const settings = useSettings();
@@ -147,14 +197,33 @@ function LiveMapPage() {
 	// Bumped on every request to follow a bus, so asking again flies there again.
 	const [followRequest, setFollowRequest] = useState<number | null>(null);
 	const selectedStop = findStop(routes, selectedStopId);
+	// One card per stop opened. Picking another stop closes the old card where
+	// it stands while the new one opens, as two separate cards.
+	const [stopCards, setStopCards] = useState<{ key: number; stopId: number | null }[]>([]);
+	const openCard = stopCards.at(-1);
+	// A bus panel takes over from the stop card; the stop stays chosen and shows in its list.
+	const cardStopId = busSheetOpen ? null : selectedStopId;
+	if (cardStopId !== (openCard?.stopId ?? null)) {
+		setStopCards((cards) => [
+			...cards.map((card) => ({ ...card, stopId: null })),
+			...(cardStopId === null ? [] : [{ key: (cards.at(-1)?.key ?? 0) + 1, stopId: cardStopId }]),
+		]);
+	}
 	const selectedBus = buses.find((bus) => bus.bus.bus_id === selectedBusId) ?? null;
 	const stopsAhead =
-		selectedBus && busSheetOpen && now > 0
-			? tracker.stopsAheadOf(selectedBus.bus.bus_id, now, 8)
-			: [];
+		selectedBus && busSheetOpen && now > 0 ? tracker.stopsAheadOf(selectedBus.bus.bus_id, now) : [];
 	const arrivals = selectedStop && now > 0 ? tracker.arrivalsAt(selectedStop.id, now) : [];
-	// Only the soonest bus gets its road drawn; a bus a full loop away would cover the route.
-	const nextArrival = arrivals.find((arrival) => !arrival.stale) ?? null;
+	// One bus gets its road drawn, the one the stop card is showing, else the
+	// soonest; a bus a full loop away would cover the route.
+	const nextArrival =
+		arrivals.find((arrival) => !arrival.stale && arrival.bus.bus_id === stopCardBusId) ??
+		arrivals.find((arrival) => !arrival.stale) ??
+		null;
+	// Only cut out while the stop card is showing, since its dots fill the gap.
+	const routeGap = useHeldUntil(
+		roadStep(cardStopId === null ? null : nextArrival),
+		cardStopId === null ? null : nextArrival,
+	);
 	// No feed yet, or the tracker has not ticked, so every list would read as empty.
 	const settling = !data || now === 0;
 	// Markers fade in on the first reveal only. Later remounts, such as the
@@ -176,6 +245,7 @@ function LiveMapPage() {
 	const unfollowBus = useCallback(() => setFollowRequest(null), []);
 	const openBus = useCallback(
 		(busId: number) => {
+			haptic("light");
 			setSelectedBusId(busId);
 			setBusSheetOpen(true);
 			followBus();
@@ -186,9 +256,10 @@ function LiveMapPage() {
 		setBusSheetOpen(open);
 		if (!open) setFollowRequest(null);
 	}, []);
-	// The stop panel shares the left edge with the bus sheet, so one gives way.
+	// The stop card and the bus sheet would both cover the map, so one gives way.
 	const pickStop = useCallback(
 		(stopId: number) => {
+			haptic("light");
 			setSelectedStopId(stopId);
 			changeBusSheet(false);
 		},
@@ -196,7 +267,7 @@ function LiveMapPage() {
 	);
 
 	return (
-		<div className="relative h-dvh w-full">
+		<div className="relative h-dvh w-full" data-map-style={settings.mapStyle}>
 			{startView ? (
 				<Map
 					center={startView.center}
@@ -210,7 +281,7 @@ function LiveMapPage() {
 					attributionControl={false}
 					pixelRatio={MAX_PIXEL_RATIO}
 					overlay={
-						<div className="absolute top-3 right-3 z-40 flex flex-col gap-2">
+						<div className={cn(panelTheme, "absolute top-3 right-3 z-40 flex flex-col gap-2")}>
 							<MapControls
 								position="top-right"
 								showCompass
@@ -231,6 +302,9 @@ function LiveMapPage() {
 						<RouteLine
 							key={route.id}
 							route={route}
+							remainingLine={
+								routeGap && routeGap.bus.route_id === route.id ? routeGap.routeRest : null
+							}
 							selectedStopId={selectedStopId}
 							nextStopIds={nextStopIds}
 							onSelectStop={pickStop}
@@ -238,15 +312,6 @@ function LiveMapPage() {
 							entering={entering}
 						/>
 					))}
-					{nextArrival && nextArrival.path.length > 1 ? (
-						<MapRoute
-							id="road-ahead"
-							coordinates={nextArrival.path}
-							color={routeColor(routes, nextArrival.bus.route_id)}
-							width={8}
-							opacity={1}
-						/>
-					) : null}
 					{userPosition ? (
 						<MapMarker longitude={userPosition[0]} latitude={userPosition[1]}>
 							<MarkerContent>
@@ -276,10 +341,36 @@ function LiveMapPage() {
 						open={busSheetOpen && selectedBus !== null}
 						onOpenChange={changeBusSheet}
 						onSelectStop={setSelectedStopId}
-						onFollow={followBus}
 						onUnfollow={unfollowBus}
+						selectedStopId={selectedStopId}
 					/>
-					<MapFirstDraw ready={!settling} onDrawn={() => setMapShown(true)} />
+					<MapFirstDraw
+						ready={now > 0 && (routes.length > 0 || error !== null)}
+						onDrawn={() => setMapShown(true)}
+					/>
+					{stopCards.map((card) => (
+						<StopCard
+							key={card.key}
+							stop={card.stopId === null ? null : selectedStop}
+							roadBusId={stopCardBusId}
+							threeD={threeD}
+							tracker={tracker}
+							settling={settling}
+							now={now}
+							userPosition={userPosition}
+							onLocate={setUserPosition}
+							onShowBus={(busId) =>
+								selectedStopId !== null && setStopCardBus({ stopId: selectedStopId, busId })
+							}
+							onClose={() => {
+								haptic("selection");
+								setSelectedStopId(null);
+							}}
+							onClosed={() =>
+								setStopCards((cards) => cards.filter((other) => other.key !== card.key))
+							}
+						/>
+					))}
 					<FollowBus
 						position={selectedBus?.position ?? null}
 						request={busSheetOpen ? followRequest : null}
@@ -288,42 +379,73 @@ function LiveMapPage() {
 				</Map>
 			) : null}
 			<div
-				aria-hidden={mapShown}
+				aria-hidden={feedShown}
 				className={cn(
 					// Kept on its own layer: when it drops off at the end of the fade, Chrome redraws the
 					// glass cards under it and they flash.
-					"absolute inset-0 z-50 flex transform-gpu items-center justify-center bg-background/60 transition-opacity duration-700",
-					mapShown ? "opacity-0" : "opacity-100",
-					// Holds the map still until the buses are on it, unless the feed is down.
-					mapShown || error !== null ? "pointer-events-none" : "touch-none",
+					"absolute inset-0 z-50 flex transform-gpu items-center justify-center transition-opacity duration-1000 ease-out will-change-[opacity]",
+					feedShown ? "opacity-0" : "opacity-100",
+					// Holds the map still, drags and wheel included, until the overlay is on its way out.
+					feedShown ? "pointer-events-none" : "touch-none",
 				)}
 			>
-				<div className="flex gap-1 loading-dots">
-					<span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/60" />
-					<span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/60" />
-					<span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/60" />
+				{/* Solid until the map has drawn, then see-through. Two layers that only fade
+				    their opacity, which the GPU does without repainting the screen. */}
+				<div className="absolute inset-0 bg-background/60" />
+				<div
+					className={cn(
+						"absolute inset-0 bg-background transition-opacity duration-1000 ease-out will-change-[opacity]",
+						mapShown ? "opacity-0" : "opacity-100",
+					)}
+				/>
+				<div className="relative flex loading-dots gap-1.5">
+					<span className="size-2 rounded-full bg-muted-foreground" />
+					<span className="size-2 rounded-full bg-muted-foreground" />
+					<span className="size-2 rounded-full bg-muted-foreground" />
 				</div>
 			</div>
 			{error !== null ? (
-				<div className="absolute top-3 left-3 rounded-full px-3 py-1.5 text-xs font-semibold text-destructive glass">
-					Feed offline
-				</div>
-			) : null}
-			{selectedStop ? (
-				<div className="absolute inset-x-3 bottom-3 rounded-2xl p-4 text-foreground glass sm:inset-x-auto sm:top-3 sm:bottom-auto sm:left-3 sm:w-72">
-					<StopPanel
-						stop={selectedStop}
-						arrivals={arrivals}
-						settling={settling}
-						now={now}
-						userPosition={userPosition}
-						onLocate={setUserPosition}
-						onClose={() => setSelectedStopId(null)}
-					/>
+				// Placed by a wrapper: glisse's glass sets its own position.
+				<div className="absolute top-3 left-3">
+					<PanelGlass className="rounded-full px-3 py-1.5 text-xs font-semibold text-destructive">
+						Feed offline
+					</PanelGlass>
 				</div>
 			) : null}
 		</div>
 	);
+}
+
+// Lets a fast-changing label settle: a new value shows at most once per
+// `intervalMs`, so a rolling number finishes its roll before the next one.
+function useSteadyText(value: string, intervalMs: number): string {
+	const [shown, setShown] = useState(value);
+	// Reads the latest value when it fires; setting the same text again is a no-op.
+	const settle = useEffectEvent(() => setShown(value));
+
+	useEffect(() => {
+		const timer = setInterval(settle, intervalMs);
+
+		return () => clearInterval(timer);
+	}, [intervalMs]);
+
+	return shown;
+}
+
+// Keeps returning the first value seen for a key until the key changes, so
+// heavy map data is rebuilt only when it has changed enough to matter.
+function useHeldUntil<T>(key: string, value: T): T {
+	const [held, setHeld] = useState({ key, value });
+	if (held.key === key) return held.value;
+
+	setHeld({ key, value });
+
+	return value;
+}
+
+// The road ahead moves on in steps this long, not every animation frame.
+function roadStep(arrival: StopArrival | null | undefined): string {
+	return arrival ? `${arrival.bus.bus_id}:${Math.round(arrival.metersAhead / ROAD_STEP_M)}` : "";
 }
 
 function findStop(routes: BusRoute[], stopId: number | null): BusStop | null {
@@ -362,6 +484,7 @@ function asParked(bus: LiveBus): TrackedBus {
 // recreates the marker when its layer changes, since the class is set once.
 const RouteLine = memo(function RouteLineView({
 	route,
+	remainingLine,
 	selectedStopId,
 	nextStopIds,
 	onSelectStop,
@@ -369,6 +492,8 @@ const RouteLine = memo(function RouteLineView({
 	entering,
 }: {
 	route: BusRoute;
+	/** The line with the road ahead cut out, since that stretch is drawn as dots. */
+	remainingLine: LngLat[][] | null;
 	selectedStopId: number | null;
 	nextStopIds: Set<number>;
 	onSelectStop: (stopId: number) => void;
@@ -376,10 +501,14 @@ const RouteLine = memo(function RouteLineView({
 	entering: boolean;
 }) {
 	const coordinates = useStableCoordinates(route.geometry);
+	const pieces = remainingLine ?? [coordinates];
 
 	return (
 		<>
-			<MapRoute coordinates={coordinates} color={route.color} width={5} opacity={0.75} />
+			{/* Keyed by position so the first piece keeps its layer as the road ahead comes and goes. */}
+			{pieces.map((piece, index) => (
+				<MapRoute key={index} coordinates={piece} color={route.color} width={5} opacity={0.75} />
+			))}
 			{route.stops.map((stop) => {
 				const next = nextStopIds.has(stop.id);
 
@@ -400,9 +529,11 @@ const RouteLine = memo(function RouteLineView({
 								<StopDot selected={stop.id === selectedStopId} entering={entering} />
 							)}
 						</MarkerContent>
-						<MarkerTooltip>
-							{stop.stop_order}. {stop.name}
-						</MarkerTooltip>
+						{stop.id === selectedStopId ? null : (
+							<MarkerTooltip offset={threeD ? STOP_PIN_TOOLTIP_OFFSET : undefined}>
+								{stop.stop_order}. {stop.name}
+							</MarkerTooltip>
+						)}
 					</MapMarker>
 				);
 			})}
@@ -436,10 +567,10 @@ function StopDot({ selected, entering }: { selected: boolean; entering: boolean 
 	return (
 		<div
 			className={cn(
-				"relative before:absolute before:-inset-4 before:rounded-full",
+				"relative transition-select before:absolute before:-inset-4 before:rounded-full",
 				entering && ENTER_ZOOM,
 				selected
-					? "size-5 rounded-full border-2 border-background bg-stop-active shadow-md ring-2 ring-stop-active/40"
+					? "size-6 rounded-full border-4 border-background bg-stop shadow-lg ring-4 ring-stop/35"
 					: "size-3 rounded-full border-2 border-background bg-stop shadow-sm",
 			)}
 		/>
@@ -449,28 +580,33 @@ function StopDot({ selected, entering }: { selected: boolean; entering: boolean 
 // A pin planted on the stop: a shadow on the road, a post made of two crossed
 // walls so it has width from every bearing, and a ball that faces the viewer.
 function StopPin({ selected, entering }: { selected: boolean; entering: boolean }) {
-	const post = selected ? "h-5 w-1 bg-stop-active" : "h-4 w-[3px] bg-stop";
+	const post = selected ? "h-5 w-1 bg-stop" : "h-4 w-[3px] bg-stop";
 
 	return (
 		<div className={cn("relative size-4 preserve-3d", entering && ENTER)}>
 			<div
 				className={cn(
-					"absolute inset-0 rounded-full blur-xs",
-					selected ? "bg-stop-active/40" : "bg-foreground/35",
+					"absolute inset-0 rounded-full blur-xs transition-select",
+					selected ? "bg-stop/50" : "bg-foreground/35",
 				)}
 			/>
-			<div className={cn("absolute bottom-1/2 left-1/2 stand -translate-x-1/2", post)} />
 			<div
 				className={cn(
-					"absolute bottom-1/2 left-1/2 stand-across -translate-x-1/2 brightness-75",
+					"absolute bottom-1/2 left-1/2 stand -translate-x-1/2 transition-select",
 					post,
 				)}
 			/>
 			<div
 				className={cn(
-					"absolute top-1/2 left-1/2 face-camera rounded-full shadow-md ring-2 ring-background before:absolute before:-inset-3 before:rounded-full",
+					"absolute bottom-1/2 left-1/2 stand-across -translate-x-1/2 brightness-75 transition-select",
+					post,
+				)}
+			/>
+			<div
+				className={cn(
+					"absolute top-1/2 left-1/2 face-camera rounded-full shadow-md ring-2 ring-background transition-select before:absolute before:-inset-3 before:rounded-full",
 					selected
-						? "-mt-3 -ml-3 size-6 bg-stop-active ring-stop-active/40 [--lift:26px]"
+						? "-mt-3 -ml-3 size-6 bg-stop ring-4 ring-stop/35 [--lift:26px]"
 						: "-mt-2 -ml-2 size-4 bg-stop [--lift:20px]",
 				)}
 			>
@@ -723,11 +859,14 @@ function BusCard({
 	entering: boolean;
 }) {
 	const { bus, nextStop, etaSeconds, stale } = tracked;
+	// The tracker refines the speed every frame; once a second is plenty to read.
+	const speed = useSteadyText(speedLabel(tracked), SPEED_LABEL_MS);
 
 	return (
-		<div
+		<PanelGlass
 			className={cn(
-				"group flex w-max cursor-pointer flex-col rounded-2xl px-3 py-1.5 text-xs text-foreground glass transition-morph delay-75 spring-reverse hover:rounded-3xl hover:px-3.5 hover:py-2.5 hover:brightness-105 hover:delay-0 hover:spring active:scale-95",
+				// Its layout is its own, so the hover spring reflows only the card, not the page.
+				"group flex w-max cursor-pointer flex-col rounded-2xl px-3 py-1.5 text-xs text-foreground transition-morph delay-75 spring-reverse contain-layout hover:rounded-3xl hover:px-3.5 hover:py-2.5 hover:brightness-105 hover:delay-0 hover:spring active:scale-95",
 				// The hover delay also delays this fade, so hold the faded-out start until it runs.
 				entering && "animate-in duration-500 fill-mode-backwards zoom-in-95 fade-in",
 			)}
@@ -748,13 +887,13 @@ function BusCard({
 								aria-hidden
 								className="min-w-0 overflow-hidden pl-1.5 whitespace-nowrap text-muted-foreground tabular-nums opacity-0 transition-reveal delay-75 spring-reverse group-hover:opacity-100 group-hover:delay-0 group-hover:spring"
 							>
-								{speedLabel(tracked)}
+								<TextMorph>{speed}</TextMorph>
 							</span>
 						</span>
 					</div>
 					<span className="grid grid-rows-[1fr] transition-unfold delay-75 spring-reverse group-hover:grid-rows-[0fr] group-hover:delay-0 group-hover:spring">
 						<span className="min-h-0 overflow-hidden text-muted-foreground tabular-nums transition-reveal delay-75 spring-reverse group-hover:opacity-0 group-hover:delay-0 group-hover:spring">
-							{speedLabel(tracked)}
+							<TextMorph>{speed}</TextMorph>
 						</span>
 					</span>
 				</div>
@@ -768,7 +907,7 @@ function BusCard({
 								<span className="text-muted-foreground uppercase">Next stop</span>
 								<span className="leading-snug font-medium">{nextStop.name}</span>
 								<span className="text-sm font-semibold tabular-nums" suppressHydrationWarning>
-									{arrivalLabel(etaSeconds, stale)}
+									<TextMorph>{arrivalLabel(etaSeconds, stale)}</TextMorph>
 								</span>
 							</>
 						) : (
@@ -777,7 +916,7 @@ function BusCard({
 					</div>
 				</div>
 			</div>
-		</div>
+		</PanelGlass>
 	);
 }
 
@@ -810,8 +949,9 @@ type BusPanelProps = {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onSelectStop: (stopId: number) => void;
-	onFollow: () => void;
 	onUnfollow: () => void;
+	/** The stop the rider picked, picked out in the list of stops ahead. */
+	selectedStopId: number | null;
 };
 
 const CLOSE_BUTTON =
@@ -826,16 +966,19 @@ function BusPanel(props: BusPanelProps) {
 }
 
 function BusSheet(props: BusPanelProps) {
+	const panelTheme = usePanelTheme();
+	const liquidGlass = useLiquidGlass();
 	const { tracked, open, onOpenChange } = props;
 
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange} modal={false} disablePointerDismissal>
 			<SheetContent
+				liquidGlass={liquidGlass ? panelTheme : undefined}
 				side="left"
 				showOverlay={false}
 				showCloseButton={false}
 				initialFocus={(openType) => openType === "keyboard"}
-				className="w-full sm:max-w-sm"
+				className={panelTheme === "dark" ? "dark w-full sm:max-w-sm" : "light w-full sm:max-w-sm"}
 			>
 				{tracked ? (
 					<>
@@ -864,12 +1007,17 @@ function BusSheet(props: BusPanelProps) {
 }
 
 function BusDrawer(props: BusPanelProps) {
+	const panelTheme = usePanelTheme();
+	const liquidGlass = useLiquidGlass();
 	const { tracked, open, onOpenChange } = props;
 
 	return (
 		<Drawer open={open} onOpenChange={onOpenChange} modal={false} disablePointerDismissal>
 			<DrawerContent
-				className="[--drawer-height:55dvh]"
+				liquidGlass={liquidGlass ? panelTheme : undefined}
+				className={
+					panelTheme === "dark" ? "dark [--drawer-height:55dvh]" : "light [--drawer-height:55dvh]"
+				}
 				header={
 					tracked ? (
 						<BusHero
@@ -913,10 +1061,20 @@ function BusDetails({
 	now,
 	color,
 	onSelectStop,
-	onFollow,
 	onUnfollow,
+	selectedStopId,
 }: Omit<BusPanelProps, "tracked" | "open" | "onOpenChange"> & { tracked: TrackedBus }) {
 	const { map } = useMap();
+	const stopList = useRef<HTMLOListElement>(null);
+	const listed = stopsAhead.some((arrival) => arrival.stop.id === selectedStopId);
+
+	// Brings the rider's stop into view when the panel opens on it or it changes.
+	useEffect(() => {
+		if (!listed || selectedStopId === null) return;
+		stopList.current
+			?.querySelector(`[data-stop="${selectedStopId}"]`)
+			?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+	}, [listed, selectedStopId]);
 
 	const flyTo = (target: LngLat) => {
 		map?.easeTo({ center: target, zoom: Math.max(map.getZoom(), 16), duration: 600 });
@@ -924,8 +1082,10 @@ function BusDetails({
 
 	return (
 		<>
-			<div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pt-1 pb-5">
-				<section className="flex flex-col gap-3">
+			{/* In the side panel the bus details stay put and only the stops scroll. The
+			    phone sheet is too short for that, so it scrolls as a whole. */}
+			<div className="flex flex-1 flex-col gap-6 overflow-y-auto px-4 pt-1 pb-5 md:min-h-0 md:overflow-visible md:pb-0">
+				<section className="flex flex-col gap-3 md:shrink-0">
 					<h3 className="text-xs font-semibold text-muted-foreground uppercase">About this bus</h3>
 					<SpeedGauge kmh={tracked.speedMps * 3.6} color={color} stale={tracked.stale} />
 					{tracked.bus.driver_name ? (
@@ -935,14 +1095,17 @@ function BusDetails({
 				{settling ? (
 					<StopsAheadSkeleton />
 				) : stopsAhead.length > 0 ? (
-					<section className="flex flex-col gap-3">
-						<div className="flex items-baseline justify-between">
+					<section className="flex flex-col gap-3 md:min-h-0 md:flex-1">
+						<div className="flex items-baseline justify-between md:shrink-0">
 							<h3 className="text-xs font-semibold text-muted-foreground uppercase">
 								Where it goes next
 							</h3>
 							<span className="text-xs text-muted-foreground">Tap a stop to see it</span>
 						</div>
-						<ol className="flex flex-col">
+						<ol
+							ref={stopList}
+							className="md:-mx-4 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:px-4 md:pb-5"
+						>
 							<li className="flex gap-3">
 								<div className="flex w-6 flex-col items-center">
 									<span
@@ -968,16 +1131,19 @@ function BusDetails({
 							{stopsAhead.map((arrival, index) => {
 								const last = index === stopsAhead.length - 1;
 								const next = index === 0;
+								const chosen = arrival.stop.id === selectedStopId;
 
 								return (
-									<li key={arrival.stop.id} className="flex gap-3">
+									<li key={arrival.stop.id} data-stop={arrival.stop.id} className="flex gap-3">
 										<div className="flex w-6 flex-col items-center">
 											<span
 												className={cn(
 													"mt-3 shrink-0 rounded-full border-2 border-background",
 													next
 														? "size-4 bg-stop-active ring-2 ring-stop-active/40"
-														: "size-3 bg-stop",
+														: chosen
+															? "size-4 bg-stop ring-2 ring-stop/40"
+															: "size-3 bg-stop",
 												)}
 											/>
 											{last ? null : <span className="w-0.5 flex-1 bg-muted-foreground/25" />}
@@ -986,20 +1152,28 @@ function BusDetails({
 											type="button"
 											onClick={() => {
 												onUnfollow();
+												haptic("selection");
 												onSelectStop(arrival.stop.id);
 												flyTo([arrival.stop.lng, arrival.stop.lat]);
 											}}
 											className={cn(
 												"mb-1 flex flex-1 items-start justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent",
 												next && "bg-stop-active/10",
+												chosen && !next && "bg-stop/10 ring-1 ring-stop/30",
 											)}
 										>
 											<span className="flex min-w-0 flex-col">
-												<span className={cn("truncate", next ? "font-semibold" : "font-medium")}>
+												<span
+													className={cn(
+														"truncate",
+														next || chosen ? "font-semibold" : "font-medium",
+													)}
+												>
 													{arrival.stop.name}
 												</span>
 												<span className="text-xs text-muted-foreground">
 													{next ? "Next stop · " : ""}
+													{chosen ? "Your stop · " : ""}
 													{formatDistance(arrival.metersAhead)} away
 												</span>
 											</span>
@@ -1033,12 +1207,6 @@ function BusDetails({
 						This bus is off its route right now, so there is no stop list.
 					</p>
 				)}
-			</div>
-			<div className="flex shrink-0 flex-col p-4">
-				<Button size="lg" onClick={onFollow}>
-					<LocateFixed />
-					Show me this bus
-				</Button>
 			</div>
 		</>
 	);
@@ -1086,7 +1254,7 @@ function BusHero({
 					<span className="text-xs font-medium text-white/70 uppercase">Next stop</span>
 					<span className="text-2xl leading-tight font-bold">{nextStop.name}</span>
 					<span className="mt-1 text-lg font-semibold" suppressHydrationWarning>
-						{arrivalLabel(etaSeconds, stale)}
+						<TextMorph>{arrivalLabel(etaSeconds, stale)}</TextMorph>
 						{etaSeconds !== null && !stale ? (
 							<span className="font-normal text-white/80"> · {arrivalClock(now, etaSeconds)}</span>
 						) : null}
@@ -1108,6 +1276,255 @@ function arrivalLabel(etaSeconds: number | null, stale: boolean): string {
 	return `in ${minutes} min`;
 }
 
+type CardSide = "top" | "bottom" | "left" | "right";
+
+const CARD_SIDES: CardSide[] = ["top", "bottom", "right", "left"];
+
+const SIDE_PLACEMENT: Record<CardSide, { wrapper: string; origin: string }> = {
+	top: { wrapper: "card-above", origin: "origin-bottom" },
+	bottom: { wrapper: "card-below", origin: "origin-top" },
+	left: { wrapper: "card-left", origin: "origin-right" },
+	right: { wrapper: "card-right", origin: "origin-left" },
+};
+
+// The card's box around the stop for a side.
+function cardBox(side: CardSide, threeD: boolean) {
+	const w = STOP_CARD_WIDTH;
+	const h = STOP_CARD_HEIGHT;
+	const gap = side === "top" && threeD ? STOP_CARD_GAP_3D : STOP_CARD_GAP;
+
+	switch (side) {
+		case "top":
+			return { x0: -w / 2, y0: -gap - h, x1: w / 2, y1: -gap };
+		case "bottom":
+			return { x0: -w / 2, y0: gap, x1: w / 2, y1: gap + h };
+		case "left":
+			return { x0: -gap - w, y0: -h / 2, x1: -gap, y1: h / 2 };
+		case "right":
+			return { x0: gap, y0: -h / 2, x1: gap + w, y1: h / 2 };
+	}
+}
+
+// Points every few pixels along the road the bus will drive, relative to the stop.
+function roadOnScreen(map: MapLibreMap, stop: LngLat, path: LngLat[]) {
+	const origin = map.project(stop);
+	const points: { x: number; y: number }[] = [];
+
+	for (let i = 0; i < path.length; i++) {
+		const b = map.project(path[i]);
+		const a = i > 0 ? map.project(path[i - 1]) : b;
+		const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 8));
+
+		for (let k = i > 0 ? 1 : 0; k <= steps; k++) {
+			points.push({
+				x: a.x + ((b.x - a.x) * k) / steps - origin.x,
+				y: a.y + ((b.y - a.y) * k) / steps - origin.y,
+			});
+		}
+	}
+
+	return { origin, points };
+}
+
+// The side that hides the least of the coming bus's road and stays on screen.
+// The current side wins ties, so the card doesn't hop around for nothing.
+function pickCardSide(
+	map: MapLibreMap,
+	stop: LngLat,
+	path: LngLat[],
+	threeD: boolean,
+	current: CardSide,
+): CardSide {
+	const { origin, points } = roadOnScreen(map, stop, path);
+	const { clientWidth, clientHeight } = map.getContainer();
+
+	const cost = (side: CardSide) => {
+		const box = cardBox(side, threeD);
+		const covered = points.filter(
+			({ x, y }) => x > box.x0 - 6 && x < box.x1 + 6 && y > box.y0 - 6 && y < box.y1 + 6,
+		).length;
+		const offScreen =
+			origin.x + box.x0 < CARD_MARGIN ||
+			origin.y + box.y0 < CARD_MARGIN ||
+			origin.x + box.x1 > clientWidth - CARD_MARGIN ||
+			origin.y + box.y1 > clientHeight - CARD_MARGIN;
+
+		return covered + (offScreen ? 1000 : 0);
+	};
+
+	return CARD_SIDES.reduce((best, side) => (cost(side) < cost(best) ? side : best), current);
+}
+
+// Opens on the stop itself, growing out of the dot, and fades out in place
+// on close. It sits on whichever side keeps the coming bus's road in view,
+// and keeps the last stop while the closing animation plays.
+function StopCard({
+	stop,
+	threeD,
+	tracker,
+	onClosed,
+	roadBusId,
+	...panel
+}: Omit<React.ComponentProps<typeof StopPanel>, "stop" | "arrivals"> & {
+	stop: BusStop | null;
+	threeD: boolean;
+	tracker: BusTracker;
+	onClosed: () => void;
+	/** The coming bus whose road to draw, else the soonest. */
+	roadBusId: number | null;
+}) {
+	const [shown, setShown] = useState(stop);
+	if (stop && stop !== shown) setShown(stop);
+	const { map } = useMap();
+	const shownId = shown?.id;
+	const [cameraMoves, setCameraMoves] = useState(0);
+
+	// After the rider pans or zooms, the road may sit somewhere else on screen.
+	useEffect(() => {
+		if (!map) return;
+		const onMoveEnd = () => setCameraMoves((count) => count + 1);
+
+		map.on("moveend", onMoveEnd);
+
+		return () => {
+			map.off("moveend", onMoveEnd);
+		};
+	}, [map]);
+
+	// Worked out for the shown stop, not the selected one, so the list stays
+	// put while the card fades out after the selection is cleared.
+	const arrivals = shown && panel.now > 0 ? tracker.arrivalsAt(shown.id, panel.now) : [];
+
+	// Chosen during render on opening and after each camera move, so the card
+	// never paints on the wrong side first.
+	const placeKey = shown ? `${shown.id}:${cameraMoves}:${threeD}` : "";
+	const [placed, setPlaced] = useState<{ key: string; side: CardSide }>({ key: "", side: "top" });
+	if (shown && map && placed.key !== placeKey) {
+		const path = arrivals.find((arrival) => !arrival.stale)?.path ?? [];
+		setPlaced({
+			key: placeKey,
+			side: pickCardSide(map, [shown.lng, shown.lat], path, threeD, placed.side),
+		});
+	}
+	const side = placed.side;
+
+	// Slides the map just enough to bring a card near an edge fully into view,
+	// for when no side fits on screen.
+	const fitCard = useEffectEvent(() => {
+		if (!map || !shown) return;
+
+		const point = map.project([shown.lng, shown.lat]);
+		const { clientWidth, clientHeight } = map.getContainer();
+		const box = cardBox(side, threeD);
+		const left = point.x + box.x0;
+		const right = point.x + box.x1;
+		const top = point.y + box.y0;
+		const bottom = point.y + box.y1;
+		const dx =
+			left < CARD_MARGIN
+				? left - CARD_MARGIN
+				: right > clientWidth - CARD_MARGIN
+					? right - (clientWidth - CARD_MARGIN)
+					: 0;
+		const dy =
+			top < CARD_MARGIN
+				? top - CARD_MARGIN
+				: bottom > clientHeight - CARD_MARGIN
+					? bottom - (clientHeight - CARD_MARGIN)
+					: 0;
+
+		if (dx !== 0 || dy !== 0) map.panBy([dx, dy], { duration: 500 });
+	});
+
+	// Only on opening: a poll that refreshes the stop must not move the map.
+	useEffect(() => {
+		if (shownId !== undefined) fitCard();
+	}, [shownId]);
+
+	const leaving = stop === null && shown !== null;
+	const finishClosing = useEffectEvent(onClosed);
+
+	// Mounted in its opening state and switched to open a frame later, so the
+	// browser has a starting point to transition from.
+	const [entered, setEntered] = useState(false);
+	useEffect(() => {
+		let second = 0;
+		const first = requestAnimationFrame(() => {
+			second = requestAnimationFrame(() => setEntered(true));
+		});
+
+		return () => {
+			cancelAnimationFrame(first);
+			cancelAnimationFrame(second);
+		};
+	}, []);
+	const cardState = leaving ? "closing" : entered ? "open" : "opening";
+
+	// Unmounts once the closing animation has played. A timer rather than
+	// animationend, which never fires when animations are switched off.
+	useEffect(() => {
+		if (!leaving) return;
+		const timer = setTimeout(() => {
+			setShown(null);
+			finishClosing();
+		}, STOP_CARD_CLOSE_MS);
+
+		return () => clearTimeout(timer);
+	}, [leaving]);
+
+	const liveRoad =
+		arrivals.find((arrival) => !arrival.stale && arrival.bus.bus_id === roadBusId) ??
+		arrivals.find((arrival) => !arrival.stale);
+	const road = useHeldUntil(roadStep(liveRoad), liveRoad);
+
+	if (!shown) return null;
+
+	const placement = SIDE_PLACEMENT[side];
+	return (
+		<>
+			{road && road.path.length > 1 ? (
+				<RoadAhead path={road.path} color={road.bus.route_color} visible={cardState === "open"} />
+			) : null}
+			<MapMarker longitude={shown.lng} latitude={shown.lat} className="z-40">
+				<MarkerContent>
+					<div className="relative size-0">
+						<div
+							className={cn(
+								"absolute top-0 left-0 transition-transform duration-700 ease-in-out",
+								placement.wrapper,
+							)}
+							style={
+								{
+									"--card-gap": `${side === "top" && threeD ? STOP_CARD_GAP_3D : STOP_CARD_GAP}px`,
+								} as React.CSSProperties
+							}
+						>
+							<PanelGlass
+								className={cn(
+									"w-72 rounded-2xl p-3.5 text-foreground",
+									"stop-card",
+									placement.origin,
+								)}
+								data-state={cardState}
+								// A swipe between buses must not also drag the map underneath.
+								onPointerDown={(event) => event.stopPropagation()}
+								onMouseDown={(event) => event.stopPropagation()}
+								onTouchStart={(event) => event.stopPropagation()}
+							>
+								<div className="stop-card-content" data-state={entered ? "open" : "opening"}>
+									<StopPanel stop={shown} arrivals={arrivals} {...panel} />
+								</div>
+							</PanelGlass>
+						</div>
+					</div>
+				</MarkerContent>
+			</MapMarker>
+		</>
+	);
+}
+
+// The soonest bus first; the rest are a swipe away, so the card stays one bus
+// tall however many are coming.
 function StopPanel({
 	stop,
 	arrivals,
@@ -1115,6 +1532,7 @@ function StopPanel({
 	now,
 	userPosition,
 	onLocate,
+	onShowBus,
 	onClose,
 }: {
 	stop: BusStop;
@@ -1123,107 +1541,214 @@ function StopPanel({
 	now: number;
 	userPosition: LngLat | null;
 	onLocate: (position: LngLat) => void;
+	onShowBus: (busId: number | null) => void;
 	onClose: () => void;
 }) {
 	const [locating, setLocating] = useState(false);
+	const [carousel, setCarousel] = useState<CarouselApi>();
+	const [shownIndex, setShownIndex] = useState(0);
 	const walkSeconds = userPosition
 		? (haversineMeters(userPosition, [stop.lng, stop.lat]) * WALK_DETOUR) / WALK_MPS
 		: null;
+	const shown = arrivals.at(shownIndex) ?? arrivals.at(0);
+
+	const showSlide = useEffectEvent((index: number) => {
+		haptic("selection");
+		setShownIndex(index);
+		onShowBus(arrivals.at(index)?.bus.bus_id ?? null);
+	});
+
+	useEffect(() => {
+		if (!carousel) return;
+		const onSelect = () => showSlide(carousel.selectedScrollSnap());
+
+		carousel.on("select", onSelect);
+
+		return () => {
+			carousel.off("select", onSelect);
+		};
+	}, [carousel]);
 
 	const locate = () => {
 		if (!("geolocation" in navigator)) return;
+		haptic("light");
 		setLocating(true);
 		navigator.geolocation.getCurrentPosition(
 			(position) => {
+				haptic("success");
 				onLocate([position.coords.longitude, position.coords.latitude]);
 				setLocating(false);
 			},
-			() => setLocating(false),
+			() => {
+				haptic("error");
+				setLocating(false);
+			},
 			{ timeout: 10_000 },
 		);
 	};
 
 	return (
-		<div className="flex flex-col gap-2">
+		<div
+			className="flex flex-col"
+			style={shown ? ({ "--bus-color": shown.bus.route_color } as React.CSSProperties) : undefined}
+		>
 			<div className="flex items-start justify-between gap-2">
-				<div className="flex min-w-0 flex-col">
-					<span className="text-xs text-muted-foreground">Stop {stop.stop_order}</span>
-					<span className="truncate font-medium">{stop.name}</span>
-				</div>
-				<Button variant="ghost" size="icon-sm" aria-label="Close stop" onClick={onClose}>
+				<span className="min-w-0 truncate pt-1 text-xs text-muted-foreground">
+					Stop {stop.stop_order} · {stop.name}
+				</span>
+				<Button
+					variant="ghost"
+					size="icon-sm"
+					aria-label="Close stop"
+					className="-mt-1 -mr-1 shrink-0"
+					onClick={onClose}
+				>
 					<X />
 				</Button>
 			</div>
 			{settling ? (
-				<ArrivalsSkeleton />
+				<div className="pt-1">
+					<ArrivalsSkeleton />
+				</div>
 			) : arrivals.length === 0 ? (
-				<span className="text-xs text-muted-foreground">No bus is heading here right now.</span>
+				<Empty size="compact">
+					<EmptyHeader>
+						<EmptyMedia variant="glass">
+							<BusFront />
+						</EmptyMedia>
+						<EmptyTitle>No bus on the way</EmptyTitle>
+						<EmptyDescription>
+							The next one shows up here as soon as it heads this way.
+						</EmptyDescription>
+					</EmptyHeader>
+				</Empty>
 			) : (
-				<ol className="flex flex-col gap-2">
-					{arrivals.map((arrival, index) => (
-						<ArrivalRow
-							key={arrival.bus.bus_id}
-							arrival={arrival}
-							previous={index > 0 ? arrivals[index - 1] : null}
-							now={now}
-							walkSeconds={walkSeconds}
-						/>
-					))}
-				</ol>
-			)}
-			{walkSeconds === null ? (
-				<Button variant="secondary" size="sm" onClick={locate} disabled={locating}>
-					<LocateFixed data-icon="inline-start" />
-					{locating ? "Finding you" : "Add my walking time"}
-				</Button>
-			) : (
-				<span className="text-xs text-muted-foreground" suppressHydrationWarning>
-					About {formatMinutes(walkSeconds)} walk from you. Leave times allow for it.
-				</span>
+				// Fades in over the skeleton when the first bus times arrive.
+				<div className="flex animate-in flex-col duration-300 fade-in">
+					<Carousel setApi={setCarousel} opts={{ align: "start" }}>
+						<CarouselContent>
+							{arrivals.map((arrival) => (
+								<CarouselItem key={arrival.bus.bus_id}>
+									<ArrivalSlide
+										arrival={arrival}
+										now={now}
+										walkSeconds={walkSeconds}
+										walkButton={
+											<Button
+												variant="outline"
+												size="sm"
+												className="shrink-0"
+												onClick={locate}
+												disabled={locating}
+												title="Leave times then allow for your walk to this stop"
+											>
+												<LocateFixed data-icon="inline-start" />
+												{locating ? "Finding you…" : "Walking time"}
+											</Button>
+										}
+									/>
+								</CarouselItem>
+							))}
+						</CarouselContent>
+					</Carousel>
+					{arrivals.length > 1 ? (
+						<div className="flex items-center justify-center gap-1.5 pt-3">
+							{arrivals.map((arrival, index) => (
+								<button
+									key={arrival.bus.bus_id}
+									type="button"
+									aria-label={`Show ${arrival.bus.bus_name}`}
+									aria-current={index === shownIndex}
+									onClick={() => carousel?.scrollTo(index)}
+									className={cn(
+										"h-1.5 cursor-pointer rounded-full transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring",
+										index === shownIndex
+											? "w-4 bg-foreground"
+											: "w-1.5 bg-foreground/30 hover:bg-foreground/50",
+									)}
+								/>
+							))}
+						</div>
+					) : null}
+					{walkSeconds === null ? null : (
+						<span className="pt-3 text-xs text-muted-foreground" suppressHydrationWarning>
+							About {formatMinutes(walkSeconds)} walk from you. Leave times allow for it.
+						</span>
+					)}
+				</div>
 			)}
 		</div>
 	);
 }
 
-function ArrivalRow({
+// One bus in the stop card: when it arrives, then which bus and how far.
+function ArrivalSlide({
 	arrival,
-	previous,
 	now,
 	walkSeconds,
+	walkButton,
 }: {
 	arrival: StopArrival;
-	previous: StopArrival | null;
 	now: number;
 	walkSeconds: number | null;
+	walkButton: React.ReactNode;
 }) {
-	const { bus, etaSeconds, metersAhead, stale } = arrival;
-	const headway =
-		previous?.etaSeconds !== null && previous?.etaSeconds !== undefined && etaSeconds !== null
-			? etaSeconds - previous.etaSeconds
-			: null;
+	const { bus, etaSeconds, stale, metersAhead } = arrival;
 
 	return (
-		<li className="flex flex-col gap-0.5 text-xs">
-			<div className="flex items-center justify-between gap-2">
-				<span className="truncate font-medium">{bus.bus_name}</span>
-				<span className="shrink-0 tabular-nums" suppressHydrationWarning>
-					{etaSeconds !== null ? formatEta(etaSeconds, stale) : "—"}
-					{etaSeconds !== null && !stale ? ` · ${arrivalClock(now, etaSeconds)}` : null}
-				</span>
-			</div>
-			<div className="flex items-center justify-between gap-2 text-muted-foreground">
-				<span>
-					{formatDistance(metersAhead)} away
-					{headway !== null ? ` · ${formatMinutes(headway)} after previous` : null}
-				</span>
-				{walkSeconds !== null && etaSeconds !== null && !stale ? (
-					<span className="shrink-0 font-medium tabular-nums">
-						{formatLeave(etaSeconds - walkSeconds)}
+		<div style={{ "--bus-color": bus.route_color } as React.CSSProperties}>
+			{etaSeconds !== null && !stale ? (
+				<div className="flex items-baseline gap-1.5 pt-1" suppressHydrationWarning>
+					<span className="text-3xl leading-tight font-bold tabular-nums">
+						<TextMorph>{clockParts(now, etaSeconds).time}</TextMorph>
 					</span>
-				) : null}
+					<span className="text-sm font-semibold">{clockParts(now, etaSeconds).period}</span>
+					<span className="text-sm text-muted-foreground tabular-nums">
+						<TextMorph>
+							{`· ${etaSeconds < 45 ? "arriving now" : `in ${formatEta(etaSeconds, false)}`}`}
+						</TextMorph>
+					</span>
+				</div>
+			) : (
+				<span className="block pt-1 text-3xl leading-tight font-bold">
+					{etaSeconds !== null ? formatEta(etaSeconds, stale) : "—"}
+				</span>
+			)}
+			<div className="flex items-center justify-between gap-2 pt-2 text-xs">
+				<span className="flex min-w-0 items-center gap-1.5">
+					<span className="size-2 shrink-0 rounded-full bg-(--bus-color)" />
+					<span className="shrink-0 font-semibold">{bus.bus_name}</span>
+					<span className="truncate text-muted-foreground">
+						<TextMorph>{`· ${formatDistance(metersAhead)}`}</TextMorph>
+					</span>
+				</span>
+				{walkSeconds !== null ? (
+					etaSeconds !== null && !stale ? (
+						<span className="shrink-0 font-medium tabular-nums">
+							<TextMorph>{formatLeave(etaSeconds - walkSeconds)}</TextMorph>
+						</span>
+					) : null
+				) : (
+					walkButton
+				)}
 			</div>
-		</li>
+		</div>
 	);
+}
+
+// The arrival clock split so the hour and minutes can be big and AM/PM small.
+function clockParts(now: number, etaSeconds: number): { time: string; period: string } {
+	const parts = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }).formatToParts(
+		new Date(now + etaSeconds * 1000),
+	);
+	const period = parts.find((part) => part.type === "dayPeriod")?.value ?? "";
+	const time = parts
+		.filter((part) => part.type !== "dayPeriod")
+		.map((part) => part.value)
+		.join("")
+		.trim();
+
+	return { time, period };
 }
 
 function arrivalClock(now: number, etaSeconds: number): string {
