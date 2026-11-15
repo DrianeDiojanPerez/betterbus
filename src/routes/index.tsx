@@ -15,6 +15,7 @@ import { TextMorph } from "torph/react";
 
 import { FollowBus } from "@/components/follow-bus";
 import { MapFirstDraw } from "@/components/map-first-draw";
+import { NearestStop, nearestStop } from "@/components/nearest-stop";
 import { PanelGlass } from "@/components/panel-glass";
 import { RoadAhead } from "@/components/road-ahead";
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
@@ -61,6 +62,7 @@ import {
 	SheetDescription,
 	SheetTitle,
 } from "@/components/ui/sheet";
+import { rememberLocateAnswer, useLocateOnOpen } from "@/hooks/use-locate-on-open";
 import { useMapBearing } from "@/hooks/use-map-bearing";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useBusTracks } from "@/hooks/use-bus-tracks";
@@ -72,6 +74,7 @@ import { cn } from "@/lib/utils";
 import { liveMapQueryOptions, savedRoutesQueryOptions } from "@/lib/live-map";
 import { MAP_STYLE_PAIRS, useLiquidGlass, usePanelTheme, useSettings } from "@/lib/settings";
 import type { BusRoute, BusStop, LiveBus, LiveMap } from "@/server/live-map";
+import { getWalkPath } from "@/server/walk-path";
 
 type ViewSearch = { lng?: number; lat?: number; zoom?: number; pitch?: number; stop?: number };
 
@@ -98,6 +101,8 @@ const DEFAULT_ZOOM = 13.5;
 // A brisk walk, with a third extra for streets not running straight to the stop.
 const WALK_MPS = 1.35;
 const WALK_DETOUR = 1.3;
+// The rider's dot colour, emerald, for the dotted walk to their stop.
+const WALK_COLOR = "#00bc7d";
 const FALLBACK_ROUTE_COLOR = "#2563eb";
 const REVEAL_MS = 700;
 // How close an opened stop card may sit to the edge of the map.
@@ -193,6 +198,14 @@ function LiveMapPage() {
 	const stopCardBusId = stopCardBus?.stopId === selectedStopId ? stopCardBus.busId : null;
 	const [threeD, setThreeD] = useState((view.pitch ?? 0) > 0);
 	const [userPosition, setUserPosition] = useState<LngLat | null>(null);
+	// Bumped when the rider locates themselves or taps their dot, to open their nearest stop.
+	const [nearestRequest, setNearestRequest] = useState(0);
+	// The stop opened that way, whose card sits on the rider instead of the stop.
+	const [nearestStopId, setNearestStopId] = useState<number | null>(null);
+	// The stop being framed for them, before its card opens.
+	const [upcomingStopId, setUpcomingStopId] = useState<number | null>(null);
+	// A stop whose walk the rider asked for with its card's walking-time button.
+	const [walkStopId, setWalkStopId] = useState<number | null>(null);
 	const settings = useSettings();
 	const mapStyles = MAP_STYLE_PAIRS[settings.mapStyle];
 	const [selectedBusId, setSelectedBusId] = useState<number | null>(null);
@@ -202,14 +215,24 @@ function LiveMapPage() {
 	const selectedStop = findStop(routes, selectedStopId);
 	// One card per stop opened. Picking another stop closes the old card where
 	// it stands while the new one opens, as two separate cards.
-	const [stopCards, setStopCards] = useState<{ key: number; stopId: number | null }[]>([]);
+	const [stopCards, setStopCards] = useState<
+		{ key: number; stopId: number | null; atRider: boolean }[]
+	>([]);
 	const openCard = stopCards.at(-1);
 	// A bus panel takes over from the stop card; the stop stays chosen and shows in its list.
 	const cardStopId = busSheetOpen ? null : selectedStopId;
-	if (cardStopId !== (openCard?.stopId ?? null)) {
+	// Moving the same stop's card between the rider and the stop is a new card
+	// too, so it closes in one place and opens in the other.
+	const cardAtRider = cardStopId !== null && cardStopId === nearestStopId && userPosition !== null;
+	if (
+		cardStopId !== (openCard?.stopId ?? null) ||
+		(cardStopId !== null && openCard?.atRider !== cardAtRider)
+	) {
 		setStopCards((cards) => [
 			...cards.map((card) => ({ ...card, stopId: null })),
-			...(cardStopId === null ? [] : [{ key: (cards.at(-1)?.key ?? 0) + 1, stopId: cardStopId }]),
+			...(cardStopId === null
+				? []
+				: [{ key: (cards.at(-1)?.key ?? 0) + 1, stopId: cardStopId, atRider: cardAtRider }]),
 		]);
 	}
 	const selectedBus = buses.find((bus) => bus.bus.bus_id === selectedBusId) ?? null;
@@ -235,6 +258,44 @@ function LiveMapPage() {
 	const roadArrival = cardStopId === null ? panelArrival : nextArrival;
 	// Only cut out while dots fill the gap: the stop card's, or the bus panel's.
 	const routeGap = useHeldUntil(roadStep(roadArrival), roadArrival);
+	const cardStop = cardStopId === null ? null : selectedStop;
+	// The walk is asked for as soon as the stop is chosen, while the camera is
+	// still on its way, so it is there when the card opens.
+	// Asked for once per card: closing it, or opening another, needs the button again.
+	if (walkStopId !== null && walkStopId !== cardStopId) setWalkStopId(null);
+	// The walk shows for the rider's nearest stop on its own; any other stop
+	// waits for its card's walking-time button.
+	const closestStopId = userPosition ? (nearestStop(routes, userPosition)?.id ?? null) : null;
+	const walkShown =
+		cardStopId !== null && (cardStopId === closestStopId || cardStopId === walkStopId);
+	const walkStop = (walkShown ? cardStop : null) ?? findStop(routes, upcomingStopId);
+	const walkEnds =
+		walkStop && userPosition
+			? {
+					from: userPosition,
+					to: [walkStop.lng, walkStop.lat] as LngLat,
+				}
+			: null;
+	const { data: walk, isError: walkFailed } = useQuery({
+		queryKey: ["walk-path", walkEnds],
+		queryFn: () => (walkEnds ? getWalkPath({ data: walkEnds }) : null),
+		enabled: walkEnds !== null,
+		staleTime: Infinity,
+	});
+	// Nothing until the router answers, so a straight line never flashes up
+	// first; straight across only when it has no way along the streets.
+	const walkPath =
+		!walkEnds || !cardStop || !walkShown
+			? null
+			: walk
+				? walk.path
+				: walk === null || walkFailed
+					? [walkEnds.from, walkEnds.to]
+					: null;
+	// Kept after the card closes, so the dots fade out with it.
+	const [lastWalkPath, setLastWalkPath] = useState(walkPath);
+	if (walkPath && walkPath !== lastWalkPath) setLastWalkPath(walkPath);
+	const cardAnchor = cardStopId !== null && cardStopId === nearestStopId ? userPosition : null;
 	// No feed yet, or the tracker has not ticked, so every list would read as empty.
 	const settling = !data || now === 0;
 	// Markers fade in on the first reveal only. Later remounts, such as the
@@ -250,8 +311,15 @@ function LiveMapPage() {
 	}, [data, revealed]);
 
 	const handleLocate = useCallback((coords: { longitude: number; latitude: number }) => {
+		rememberLocateAnswer("granted");
 		setUserPosition([coords.longitude, coords.latitude]);
+		setNearestRequest((request) => request + 1);
 	}, []);
+	// A link to a stop opens that stop, so finding the rider then only places their dot.
+	useLocateOnOpen(feedShown && routes.length > 0, (coords) => {
+		if (view.stop === undefined) handleLocate(coords);
+		else setUserPosition([coords.longitude, coords.latitude]);
+	});
 	const followBus = useCallback(() => setFollowRequest((request) => (request ?? 0) + 1), []);
 	const unfollowBus = useCallback(() => setFollowRequest(null), []);
 	const openBus = useCallback(
@@ -293,9 +361,19 @@ function LiveMapPage() {
 		(stopId: number) => {
 			haptic("light");
 			setSelectedStopId(stopId);
+			// A tapped stop opens its card on the stop, even when it is the rider's nearest.
+			setNearestStopId(null);
 			changeBusSheet(false);
 		},
 		[changeBusSheet],
+	);
+
+	const pickNearest = useCallback(
+		(stopId: number) => {
+			pickStop(stopId);
+			setNearestStopId(stopId);
+		},
+		[pickStop],
 	);
 
 	return (
@@ -345,7 +423,11 @@ function LiveMapPage() {
 						/>
 					))}
 					{userPosition ? (
-						<MapMarker longitude={userPosition[0]} latitude={userPosition[1]}>
+						<MapMarker
+							longitude={userPosition[0]}
+							latitude={userPosition[1]}
+							onClick={() => setNearestRequest((request) => request + 1)}
+						>
 							<MarkerContent>
 								<div className="size-4 animate-in rounded-full bg-here ring-4 ring-here/30 duration-500 zoom-in-50 fade-in" />
 							</MarkerContent>
@@ -379,21 +461,37 @@ function LiveMapPage() {
 						onUnfollow={unfollowBus}
 						selectedStopId={selectedStopId}
 					/>
+					<NearestStop
+						request={nearestRequest}
+						position={userPosition}
+						routes={routes}
+						onChoose={setUpcomingStopId}
+						onPick={pickNearest}
+					/>
 					<MapFirstDraw
 						ready={now > 0 && (routes.length > 0 || error !== null)}
 						onDrawn={() => setMapShown(true)}
 					/>
+					{lastWalkPath ? (
+						<RoadAhead path={lastWalkPath} color={WALK_COLOR} visible={walkPath !== null} />
+					) : null}
 					{stopCards.map((card) => (
 						<StopCard
 							key={card.key}
 							stop={card.stopId === null ? null : selectedStop}
+							anchor={card.stopId === null ? null : cardAnchor}
+							walkMeters={walk && walkEnds && walkShown ? walk.meters : null}
+							walkPath={walkPath}
 							roadBusId={stopCardBusId}
 							threeD={threeD}
 							tracker={tracker}
 							settling={settling}
 							now={now}
-							userPosition={userPosition}
-							onLocate={setUserPosition}
+							userPosition={walkShown ? userPosition : null}
+							onLocate={(position) => {
+								setUserPosition(position);
+								setWalkStopId(selectedStopId);
+							}}
 							onShowBus={(busId) =>
 								selectedStopId !== null && setStopCardBus({ stopId: selectedStopId, busId })
 							}
@@ -1334,22 +1432,23 @@ function cardBox(side: CardSide, threeD: boolean) {
 }
 
 // Points every few pixels along the road the bus will drive, relative to the stop.
-function roadOnScreen(map: MapLibreMap, stop: LngLat, path: LngLat[]) {
+function roadOnScreen(map: MapLibreMap, stop: LngLat, paths: LngLat[][]) {
 	const origin = map.project(stop);
 	const points: { x: number; y: number }[] = [];
 
-	for (let i = 0; i < path.length; i++) {
-		const b = map.project(path[i]);
-		const a = i > 0 ? map.project(path[i - 1]) : b;
-		const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 8));
+	for (const path of paths)
+		for (let i = 0; i < path.length; i++) {
+			const b = map.project(path[i]);
+			const a = i > 0 ? map.project(path[i - 1]) : b;
+			const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 8));
 
-		for (let k = i > 0 ? 1 : 0; k <= steps; k++) {
-			points.push({
-				x: a.x + ((b.x - a.x) * k) / steps - origin.x,
-				y: a.y + ((b.y - a.y) * k) / steps - origin.y,
-			});
+			for (let k = i > 0 ? 1 : 0; k <= steps; k++) {
+				points.push({
+					x: a.x + ((b.x - a.x) * k) / steps - origin.x,
+					y: a.y + ((b.y - a.y) * k) / steps - origin.y,
+				});
+			}
 		}
-	}
 
 	return { origin, points };
 }
@@ -1359,11 +1458,11 @@ function roadOnScreen(map: MapLibreMap, stop: LngLat, path: LngLat[]) {
 function pickCardSide(
 	map: MapLibreMap,
 	stop: LngLat,
-	path: LngLat[],
+	paths: LngLat[][],
 	threeD: boolean,
 	current: CardSide,
 ): CardSide {
-	const { origin, points } = roadOnScreen(map, stop, path);
+	const { origin, points } = roadOnScreen(map, stop, paths);
 	const { clientWidth, clientHeight } = map.getContainer();
 
 	const cost = (side: CardSide) => {
@@ -1392,9 +1491,15 @@ function StopCard({
 	tracker,
 	onClosed,
 	roadBusId,
+	anchor,
+	walkPath,
 	...panel
 }: Omit<React.ComponentProps<typeof StopPanel>, "stop" | "arrivals"> & {
 	stop: BusStop | null;
+	/** The rider's walk to the stop, kept clear of the card like the bus's road. */
+	walkPath: LngLat[] | null;
+	/** Where the card sits, when not on the stop: the rider who asked for their nearest one. */
+	anchor: LngLat | null;
 	threeD: boolean;
 	tracker: BusTracker;
 	onClosed: () => void;
@@ -1403,6 +1508,9 @@ function StopCard({
 }) {
 	const [shown, setShown] = useState(stop);
 	if (stop && stop !== shown) setShown(stop);
+	// Kept while closing, like the stop, so the card fades where it stood.
+	const [shownAnchor, setShownAnchor] = useState(anchor);
+	if (stop && anchor !== shownAnchor) setShownAnchor(anchor);
 	const { map } = useMap();
 	const shownId = shown?.id;
 	const [cameraMoves, setCameraMoves] = useState(0);
@@ -1425,13 +1533,21 @@ function StopCard({
 
 	// Chosen during render on opening and after each camera move, so the card
 	// never paints on the wrong side first.
-	const placeKey = shown ? `${shown.id}:${cameraMoves}:${threeD}` : "";
+	// A card on the rider is placed once, clear of their walk as well: it opens
+	// as the camera settles, and moving it after would read as a jump.
+	const at: LngLat | null = shownAnchor ?? (shown ? [shown.lng, shown.lat] : null);
+	const placeKey = !at
+		? ""
+		: shownAnchor
+			? `${at.join(",")}:${threeD}`
+			: `${at.join(",")}:${cameraMoves}:${threeD}`;
 	const [placed, setPlaced] = useState<{ key: string; side: CardSide }>({ key: "", side: "top" });
-	if (shown && map && placed.key !== placeKey) {
-		const path = arrivals.find((arrival) => !arrival.stale)?.path ?? [];
+	if (shown && at && map && placed.key !== placeKey) {
+		const road = arrivals.find((arrival) => !arrival.stale)?.path ?? [];
+		const walk = shownAnchor ? (walkPath ?? [shownAnchor, [shown.lng, shown.lat]]) : [];
 		setPlaced({
 			key: placeKey,
-			side: pickCardSide(map, [shown.lng, shown.lat], path, threeD, placed.side),
+			side: pickCardSide(map, at, [road, walk], threeD, placed.side),
 		});
 	}
 	const side = placed.side;
@@ -1441,7 +1557,7 @@ function StopCard({
 	const fitCard = useEffectEvent(() => {
 		if (!map || !shown) return;
 
-		const point = map.project([shown.lng, shown.lat]);
+		const point = map.project(at ?? [shown.lng, shown.lat]);
 		const { clientWidth, clientHeight } = map.getContainer();
 		const box = cardBox(side, threeD);
 		const left = point.x + box.x0;
@@ -1513,7 +1629,7 @@ function StopCard({
 			{road && road.path.length > 1 ? (
 				<RoadAhead path={road.path} color={road.bus.route_color} visible={cardState === "open"} />
 			) : null}
-			<MapMarker longitude={shown.lng} latitude={shown.lat} className="z-40">
+			<MapMarker longitude={at?.[0] ?? shown.lng} latitude={at?.[1] ?? shown.lat} className="z-40">
 				<MarkerContent>
 					<div className="relative size-0">
 						<div
@@ -1563,10 +1679,13 @@ function StopPanel({
 	onShowBus,
 	onClose,
 	roadBusId,
+	walkMeters,
 }: {
 	stop: BusStop;
 	arrivals: StopArrival[];
 	roadBusId: number | null;
+	/** The walk along the streets, once the router has it. */
+	walkMeters: number | null;
 	settling: boolean;
 	now: number;
 	userPosition: LngLat | null;
@@ -1577,9 +1696,12 @@ function StopPanel({
 	const [locating, setLocating] = useState(false);
 	const [carousel, setCarousel] = useState<CarouselApi>();
 	const [shownIndex, setShownIndex] = useState(0);
-	const walkSeconds = userPosition
-		? (haversineMeters(userPosition, [stop.lng, stop.lat]) * WALK_DETOUR) / WALK_MPS
-		: null;
+	const walkSeconds =
+		walkMeters !== null
+			? walkMeters / WALK_MPS
+			: userPosition
+				? (haversineMeters(userPosition, [stop.lng, stop.lat]) * WALK_DETOUR) / WALK_MPS
+				: null;
 	const shown = arrivals.at(shownIndex) ?? arrivals.at(0);
 
 	const showSlide = useEffectEvent((index: number) => {
