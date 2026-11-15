@@ -1,14 +1,32 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "cn";
 
-function Empty({ className, ...props }: React.ComponentProps<"div">) {
+const emptyVariants = cva(
+	"flex w-full min-w-0 flex-1 flex-col items-center justify-center rounded-lg border-dashed text-center text-balance",
+	{
+		variants: {
+			size: {
+				default: "gap-4 p-12",
+				// For small surfaces such as a card floating over the map.
+				compact: "gap-2 px-2 py-2",
+			},
+		},
+		defaultVariants: {
+			size: "default",
+		},
+	},
+);
+
+function Empty({
+	className,
+	size = "default",
+	...props
+}: React.ComponentProps<"div"> & VariantProps<typeof emptyVariants>) {
 	return (
 		<div
 			data-slot="empty"
-			className={cn(
-				"flex w-full min-w-0 flex-1 flex-col items-center justify-center gap-4 rounded-lg border-dashed p-12 text-center text-balance",
-				className,
-			)}
+			data-size={size}
+			className={cn(emptyVariants({ size, className }))}
 			{...props}
 		/>
 	);
@@ -31,6 +49,9 @@ const emptyMediaVariants = cva(
 			variant: {
 				default: "bg-transparent",
 				icon: "flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground [&_svg:not([class*='size-'])]:size-6",
+				// For glass surfaces over the map, where the muted fill blends into the card.
+				glass:
+					"flex size-10 shrink-0 items-center justify-center rounded-xl bg-foreground/10 text-foreground ring-1 ring-foreground/15 [&_svg:not([class*='size-'])]:size-6",
 			},
 		},
 		defaultVariants: {
