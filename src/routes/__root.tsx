@@ -23,7 +23,7 @@ export const Route = createRootRouteWithContext<{
 				content: "width=device-width, initial-scale=1",
 			},
 			{
-				title: "BetterBus",
+				title: "E-Bus",
 			},
 			{
 				name: "description",
@@ -31,6 +31,21 @@ export const Route = createRootRouteWithContext<{
 			},
 		],
 		links: [
+			{ rel: "icon", href: "/favicon.ico", sizes: "48x48" },
+			{
+				rel: "icon",
+				type: "image/png",
+				href: "/icon-light.png",
+				media: "(prefers-color-scheme: light)",
+			},
+			{
+				rel: "icon",
+				type: "image/png",
+				href: "/icon-dark.png",
+				media: "(prefers-color-scheme: dark)",
+			},
+			{ rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+			{ rel: "manifest", href: "/manifest.json" },
 			{ rel: "preconnect", href: "https://tiles.openfreemap.org", crossOrigin: "anonymous" },
 			{
 				rel: "preload",
