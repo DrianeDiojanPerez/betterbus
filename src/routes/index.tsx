@@ -1494,7 +1494,7 @@ function StopCard({
 	anchor,
 	walkPath,
 	...panel
-}: Omit<React.ComponentProps<typeof StopPanel>, "stop" | "arrivals"> & {
+}: Omit<React.ComponentProps<typeof StopPanel>, "stop" | "arrivals" | "rider"> & {
 	stop: BusStop | null;
 	/** The rider's walk to the stop, kept clear of the card like the bus's road. */
 	walkPath: LngLat[] | null;
@@ -1511,6 +1511,18 @@ function StopCard({
 	// Kept while closing, like the stop, so the card fades where it stood.
 	const [shownAnchor, setShownAnchor] = useState(anchor);
 	if (stop && anchor !== shownAnchor) setShownAnchor(anchor);
+	// The walk too, so a closing card keeps its rings instead of flashing the
+	// walking-time button on the way out.
+	const [shownWalk, setShownWalk] = useState({
+		userPosition: panel.userPosition,
+		walkMeters: panel.walkMeters,
+	});
+	if (
+		stop &&
+		(panel.userPosition !== shownWalk.userPosition || panel.walkMeters !== shownWalk.walkMeters)
+	) {
+		setShownWalk({ userPosition: panel.userPosition, walkMeters: panel.walkMeters });
+	}
 	const { map } = useMap();
 	const shownId = shown?.id;
 	const [cameraMoves, setCameraMoves] = useState(0);
@@ -1656,7 +1668,14 @@ function StopCard({
 								onTouchStart={(event) => event.stopPropagation()}
 							>
 								<div className="stop-card-content" data-state={entered ? "open" : "opening"}>
-									<StopPanel stop={shown} arrivals={arrivals} roadBusId={roadBusId} {...panel} />
+									<StopPanel
+										stop={shown}
+										arrivals={arrivals}
+										roadBusId={roadBusId}
+										rider={shownAnchor !== null}
+										{...panel}
+										{...shownWalk}
+									/>
 								</div>
 							</PanelGlass>
 						</div>
@@ -1680,10 +1699,13 @@ function StopPanel({
 	onClose,
 	roadBusId,
 	walkMeters,
+	rider,
 }: {
 	stop: BusStop;
 	arrivals: StopArrival[];
 	roadBusId: number | null;
+	/** Opened on the rider: their walk and the bus side by side, as rings. */
+	rider: boolean;
 	/** The walk along the streets, once the router has it. */
 	walkMeters: number | null;
 	settling: boolean;
@@ -1786,24 +1808,33 @@ function StopPanel({
 						<CarouselContent>
 							{arrivals.map((arrival) => (
 								<CarouselItem key={arrival.bus.bus_id}>
-									<ArrivalSlide
-										arrival={arrival}
-										now={now}
-										walkSeconds={walkSeconds}
-										walkButton={
-											<Button
-												variant="outline"
-												size="sm"
-												className="shrink-0"
-												onClick={locate}
-												disabled={locating}
-												title="Leave times then allow for your walk to this stop"
-											>
-												<LocateFixed data-icon="inline-start" />
-												{locating ? "Finding you…" : "Walking time"}
-											</Button>
-										}
-									/>
+									{rider && walkSeconds !== null ? (
+										<RiderSlide
+											arrival={arrival}
+											now={now}
+											walkSeconds={walkSeconds}
+											walkMeters={walkMeters ?? walkSeconds * WALK_MPS}
+										/>
+									) : (
+										<ArrivalSlide
+											arrival={arrival}
+											now={now}
+											walkSeconds={walkSeconds}
+											walkButton={
+												<Button
+													variant="outline"
+													size="sm"
+													className="shrink-0"
+													onClick={locate}
+													disabled={locating}
+													title="Leave times then allow for your walk to this stop"
+												>
+													<LocateFixed data-icon="inline-start" />
+													{locating ? "Finding you…" : "Walking time"}
+												</Button>
+											}
+										/>
+									)}
 								</CarouselItem>
 							))}
 						</CarouselContent>
@@ -1827,7 +1858,7 @@ function StopPanel({
 							))}
 						</div>
 					) : null}
-					{walkSeconds === null ? null : (
+					{walkSeconds === null || rider ? null : (
 						<span className="pt-3 text-xs text-muted-foreground" suppressHydrationWarning>
 							About {formatMinutes(walkSeconds)} walk from you. Leave times allow for it.
 						</span>
@@ -1889,6 +1920,158 @@ function ArrivalSlide({
 					walkButton
 				)}
 			</div>
+		</div>
+	);
+}
+
+const RING_SIZE = 92;
+const RING_STROKE = 7;
+const RING_GAP = 3;
+
+// Two rings, the bus outside and the walk inside, each the share of the time
+// ahead that it takes up, so the bigger one is the one to watch.
+function Rings({ bus, walk, center }: { bus: number; walk: number; center: React.ReactNode }) {
+	const middle = RING_SIZE / 2;
+	const outer = middle - RING_STROKE / 2;
+	const inner = outer - RING_STROKE - RING_GAP;
+	const arc = (radius: number, share: number, color: string) => {
+		const length = 2 * Math.PI * radius;
+
+		return (
+			<>
+				<circle
+					cx={middle}
+					cy={middle}
+					r={radius}
+					fill="none"
+					stroke="currentColor"
+					strokeOpacity={0.12}
+					strokeWidth={RING_STROKE}
+				/>
+				<circle
+					cx={middle}
+					cy={middle}
+					r={radius}
+					fill="none"
+					stroke={color}
+					strokeWidth={RING_STROKE}
+					strokeLinecap="round"
+					strokeDasharray={`${length * share} ${length}`}
+					transform={`rotate(-90 ${middle} ${middle})`}
+					className="transition-all duration-700 ease-out"
+				/>
+			</>
+		);
+	};
+
+	return (
+		<div className="relative size-23 shrink-0">
+			<svg width={RING_SIZE} height={RING_SIZE} aria-hidden>
+				{arc(outer, bus, "var(--bus-color)")}
+				{arc(inner, walk, WALK_COLOR)}
+			</svg>
+			<div className="absolute inset-0 grid place-items-center text-center leading-none">
+				{center}
+			</div>
+		</div>
+	);
+}
+
+function Bar({ share, color }: { share: number; color: string }) {
+	return (
+		<div className="mt-1 h-1.5 overflow-hidden rounded-full bg-foreground/10">
+			<div
+				className="h-full w-(--share) rounded-full bg-(--bar) transition-all duration-700 ease-out"
+				style={{ "--share": `${share * 100}%`, "--bar": color } as React.CSSProperties}
+			/>
+		</div>
+	);
+}
+
+// The card on the rider: how long until they should set off, with the bus and
+// their walk as rings and labelled bars.
+function RiderSlide({
+	arrival,
+	now,
+	walkSeconds,
+	walkMeters,
+}: {
+	arrival: StopArrival;
+	now: number;
+	walkSeconds: number;
+	walkMeters: number;
+}) {
+	const { bus, etaSeconds, stale } = arrival;
+	const busSeconds = etaSeconds !== null && !stale ? etaSeconds : null;
+	const total = (busSeconds ?? 0) + walkSeconds;
+	const busShare = busSeconds === null || total === 0 ? 0 : busSeconds / total;
+	const walkShare = total === 0 ? 0 : walkSeconds / total;
+	const headroom = busSeconds === null ? null : busSeconds - walkSeconds;
+	const leaveMinutes = headroom === null ? null : Math.max(0, Math.round(headroom / 60));
+
+	const late = headroom !== null && headroom < -30;
+
+	return (
+		<div
+			className="flex flex-col pt-2"
+			style={{ "--bus-color": bus.route_color } as React.CSSProperties}
+			suppressHydrationWarning
+		>
+			<div className="flex items-center gap-4">
+				<Rings
+					bus={busShare}
+					walk={walkShare}
+					center={
+						<div>
+							<div className="text-2xl font-bold tabular-nums">
+								<TextMorph>{leaveMinutes === null || late ? "—" : String(leaveMinutes)}</TextMorph>
+							</div>
+							<div className="text-xs text-muted-foreground">{late ? "missed" : "min"}</div>
+						</div>
+					}
+				/>
+				<div className="flex min-w-0 flex-1 flex-col gap-3 text-xs">
+					<div>
+						<div className="flex items-baseline justify-between gap-2">
+							<span className="flex min-w-0 items-center gap-1.5">
+								<span className="size-2 shrink-0 rounded-full bg-(--bus-color)" />
+								<span className="truncate font-semibold">{bus.bus_name}</span>
+							</span>
+							<span className="shrink-0 font-semibold tabular-nums">
+								<TextMorph>{busSeconds === null ? "—" : formatEta(busSeconds, false)}</TextMorph>
+							</span>
+						</div>
+						<Bar share={busShare} color="var(--bus-color)" />
+					</div>
+					<div>
+						<div className="flex items-baseline justify-between gap-2">
+							<span className="flex min-w-0 items-center gap-1.5">
+								<span className="size-2 shrink-0 rounded-full bg-here" />
+								<span className="truncate font-semibold">
+									Walk{" "}
+									<span className="font-normal text-muted-foreground">
+										· {formatDistance(walkMeters)}
+									</span>
+								</span>
+							</span>
+							<span className="shrink-0 font-semibold tabular-nums">
+								{formatMinutes(walkSeconds)}
+							</span>
+						</div>
+						<Bar share={walkShare} color={WALK_COLOR} />
+					</div>
+				</div>
+			</div>
+			{busSeconds === null || headroom === null ? null : (
+				<div className="mt-3 flex items-center justify-between gap-2 border-t border-foreground/10 pt-2.5 text-xs">
+					<span className="font-semibold">
+						{late
+							? "Too late for this one"
+							: `Leave by ${arrivalClock(now, Math.max(0, headroom))}`}
+					</span>
+					<span className="text-muted-foreground">Bus at {arrivalClock(now, busSeconds)}</span>
+				</div>
+			)}
 		</div>
 	);
 }
