@@ -219,11 +219,16 @@ function LiveMapPage() {
 		arrivals.find((arrival) => !arrival.stale && arrival.bus.bus_id === stopCardBusId) ??
 		arrivals.find((arrival) => !arrival.stale) ??
 		null;
-	// Only cut out while the stop card is showing, since its dots fill the gap.
-	const routeGap = useHeldUntil(
-		roadStep(cardStopId === null ? null : nextArrival),
-		cardStopId === null ? null : nextArrival,
-	);
+	// With a bus panel open, the road drawn is that bus's to the chosen stop.
+	const panelArrival =
+		busSheetOpen && selectedBus
+			? (arrivals.find(
+					(arrival) => !arrival.stale && arrival.bus.bus_id === selectedBus.bus.bus_id,
+				) ?? null)
+			: null;
+	const roadArrival = cardStopId === null ? panelArrival : nextArrival;
+	// Only cut out while dots fill the gap: the stop card's, or the bus panel's.
+	const routeGap = useHeldUntil(roadStep(roadArrival), roadArrival);
 	// No feed yet, or the tracker has not ticked, so every list would read as empty.
 	const settling = !data || now === 0;
 	// Markers fade in on the first reveal only. Later remounts, such as the
@@ -330,6 +335,9 @@ function LiveMapPage() {
 							onOpen={openBus}
 						/>
 					))}
+					{busSheetOpen && routeGap && routeGap.path.length > 1 ? (
+						<RoadAhead path={routeGap.path} color={routeGap.bus.route_color} visible />
+					) : null}
 					<BusPanel
 						tracked={selectedBus}
 						stopsAhead={stopsAhead}
