@@ -73,6 +73,8 @@ export type StopArrival = {
 	etaSeconds: number | null;
 	stale: boolean;
 	path: LngLat[];
+	/** The route without `path`: one piece on a loop, two on a line with ends. */
+	routeRest: LngLat[][];
 };
 
 type RouteIndex = {
@@ -405,15 +407,15 @@ export class BusTracker {
 		return arrivals.toSorted((a, b) => (a.etaSeconds ?? Infinity) - (b.etaSeconds ?? Infinity));
 	}
 
-	/** The stops a bus will reach next, nearest first. */
-	stopsAheadOf(busId: number, nowMs: number, count: number): StopArrival[] {
+	/** The stops a bus will reach next, nearest first, without their roads. */
+	stopsAheadOf(busId: number, nowMs: number, count = Infinity): StopArrival[] {
 		const track = this.tracks.get(busId);
 		const route = track?.route;
 		if (!track || !route) return [];
 
 		return stopsAhead(route, track.displayedArc)
 			.slice(0, count)
-			.flatMap((entry) => this.arrivalFor(track, route, entry, nowMs) ?? []);
+			.flatMap((entry) => this.arrivalFor(track, route, entry, nowMs, false) ?? []);
 	}
 
 	private arrivalFor(
@@ -421,6 +423,9 @@ export class BusTracker {
 		route: RouteIndex,
 		target: { stop: BusStop; arc: number },
 		nowMs: number,
+		// The road and the rest of the route are slices of the whole line; a list
+		// of every stop ahead has no use for them.
+		withRoad = true,
 	): StopArrival | null {
 		const metersAhead = arcAhead(route.line, track.displayedArc, target.arc);
 		if (!Number.isFinite(metersAhead)) return null;
@@ -437,7 +442,15 @@ export class BusTracker {
 			stopsBetween,
 			etaSeconds: this.etaSeconds(track, metersAhead, stopsBetween),
 			stale: ageSeconds > MAX_EXTRAPOLATION_S,
-			path: sliceArc(route.line, track.displayedArc, target.arc),
+			path: withRoad ? sliceArc(route.line, track.displayedArc, target.arc) : [],
+			routeRest: !withRoad
+				? []
+				: route.line.closed
+					? [sliceArc(route.line, target.arc, track.displayedArc)]
+					: [
+							sliceArc(route.line, 0, track.displayedArc),
+							sliceArc(route.line, target.arc, route.line.length),
+						],
 		};
 	}
 }
