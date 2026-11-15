@@ -837,6 +837,8 @@ function BusMarker({
 				rotation={heading}
 				rotationAlignment="map"
 				pitchAlignment="map"
+				// Whole-pixel steps read as a shudder on a bus that moves every frame.
+				subpixelPositioning
 				className="z-10 preserve-3d"
 			>
 				<MarkerContent className="preserve-3d">
@@ -850,6 +852,7 @@ function BusMarker({
 			<MapMarker
 				longitude={position[0]}
 				latitude={position[1]}
+				subpixelPositioning
 				className="z-20"
 				onClick={() => onOpen(bus.bus_id)}
 			>
