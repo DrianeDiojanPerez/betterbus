@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 
+import { env } from "@/env";
+
 import savedLines from "./road-geometry.json";
 import routeSnapshot from "./route-snapshot.json";
 import { matchRouteToRoads } from "./road-match";
@@ -59,7 +61,6 @@ export type LiveMap = {
 	buses: LiveBus[];
 };
 
-const FEED_URL = "https://bus.techtingz.bz/live-map/data";
 const ROAD_MATCH_RETRY_MS = 10 * 60 * 1000;
 
 type RoadGeometryEntry = { matched: LatLng[] | null; expiresAt: number | null };
@@ -118,7 +119,7 @@ function withRoadGeometry(route: BusRoute): BusRoute {
 }
 
 async function fetchLiveMap(): Promise<LiveMap> {
-	const response = await fetch(`${FEED_URL}?_ts=${Date.now()}`, {
+	const response = await fetch(`${env.LIVE_MAP_FEED_URL}?_ts=${Date.now()}`, {
 		headers: {
 			Accept: "application/json",
 			"X-Requested-With": "XMLHttpRequest",
