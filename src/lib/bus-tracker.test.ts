@@ -101,6 +101,28 @@ describe("BusTracker", () => {
 		expect(later.heading).toBeCloseTo(90, 0);
 	});
 
+	it("turns through a corner instead of snapping to the new road", () => {
+		// About 300 m east, then north.
+		const corner = [
+			...road.slice(0, 4),
+			...[1, 2, 3].map((i) => ({ lat: 17.5 + i * 0.0009, lng: road[3].lng })),
+		];
+		const map = feed([bus({ lat: corner[1].lat, lng: corner[1].lng })]);
+		map.routes[0] = { ...map.routes[0], geometry: corner, stops: [] };
+		const tracker = new BusTracker();
+		tracker.update(map, T0);
+
+		const headings = run(tracker, T0, T0 + 30_000).map((frame) => frame.heading);
+		const turns = headings.slice(1).map((heading, i) => {
+			const turn = Math.abs(heading - headings[i]) % 360;
+			return Math.min(turn, 360 - turn);
+		});
+
+		expect(headings[0]).toBeCloseTo(90, 0);
+		expect(Math.max(...turns)).toBeLessThan(15);
+		expect(Math.min(headings.at(-1) ?? 0, 360 - (headings.at(-1) ?? 0))).toBeLessThan(1);
+	});
+
 	it("keeps a stopped bus where it is", () => {
 		const tracker = new BusTracker();
 		tracker.update(feed([bus({ speed: 0 })]), T0);

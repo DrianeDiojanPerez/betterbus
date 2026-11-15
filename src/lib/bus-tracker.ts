@@ -3,6 +3,7 @@ import type { BusRoute, BusStop, LiveBus, LiveMap } from "@/server/live-map";
 import {
 	arcAhead,
 	arcDelta,
+	bearingDegrees,
 	buildPolyline,
 	moveAlongBearing,
 	normalizeArc,
@@ -50,6 +51,11 @@ const CORNER_SAMPLE_M = 5;
 // Kinks smaller than this are noise in the road line, not corners.
 const MIN_CORNER_RAD = 0.2;
 const MIN_CORNER_MPS = 2.5;
+// The heading is the road's direction across this much either side of the
+// bus, eased over this long, so it turns through a bend instead of snapping
+// at every point of the road line.
+const HEADING_SPAN_M = 6;
+const HEADING_TAU_MS = 300;
 
 export type TrackedBus = {
 	bus: LiveBus;
@@ -99,6 +105,22 @@ type Track = {
 };
 
 type Prediction = { arc: number; speedMps: number; dwelling: boolean };
+
+function roadHeading(line: Polyline, arc: number): number {
+	const behind = pointAtArc(line, arc - HEADING_SPAN_M).position;
+	const ahead = pointAtArc(line, arc + HEADING_SPAN_M).position;
+
+	return behind[0] === ahead[0] && behind[1] === ahead[1]
+		? pointAtArc(line, arc).heading
+		: bearingDegrees(behind, ahead);
+}
+
+// Turns the short way round.
+function easeHeading(from: number, to: number, ease: number): number {
+	const turn = ((to - from + 540) % 360) - 180;
+
+	return (from + turn * ease + 360) % 360;
+}
 
 function indexRoute(route: BusRoute): RouteIndex {
 	const points = route.geometry.map((point) => [point.lng, point.lat] as LngLat);
@@ -211,7 +233,7 @@ export class BusTracker {
 			displayedArc: keepDisplayed ? existing.displayedArc : anchorArc,
 			displayedSpeedMps: existing?.displayedSpeedMps ?? speedMps,
 			displayedPosition: existing?.displayedPosition ?? (onRoute ? projection.snapped : position),
-			heading: onRoute ? projection.heading : bus.heading,
+			heading: keepDisplayed ? existing.heading : onRoute ? projection.heading : bus.heading,
 			lastTickMs: existing?.lastTickMs ?? null,
 		});
 	}
@@ -332,8 +354,9 @@ export class BusTracker {
 		// Past the extrapolation limit the simulated bus stands still.
 		if (stale) prediction.speedMps = 0;
 		const gap = arcDelta(line, track.displayedArc, prediction.arc);
+		const jumped = Math.abs(gap) > SNAP_M;
 
-		if (Math.abs(gap) > SNAP_M) {
+		if (jumped) {
 			track.displayedArc = prediction.arc;
 			track.displayedSpeedMps = prediction.speedMps;
 		} else if (prediction.speedMps === 0 && gap <= 0) {
@@ -364,7 +387,10 @@ export class BusTracker {
 			track.displayedArc = normalizeArc(line, track.displayedArc + advance);
 		}
 
-		const { position, heading } = pointAtArc(line, track.displayedArc);
+		const { position } = pointAtArc(line, track.displayedArc);
+		const turnEase =
+			jumped || dtSeconds === 0 ? 1 : 1 - Math.exp((-dtSeconds * 1000) / HEADING_TAU_MS);
+		const heading = easeHeading(track.heading, roadHeading(line, track.displayedArc), turnEase);
 		track.displayedPosition = position;
 		track.heading = heading;
 
