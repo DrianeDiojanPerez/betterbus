@@ -116,6 +116,9 @@ const STOP_CARD_GAP_3D = 40;
 const ROAD_STEP_M = 5;
 // How often a bus card's speed may change.
 const SPEED_LABEL_MS = 1000;
+// A bus this close to the stop that is suddenly far from it, or gone, has passed it.
+const PASS_NEAR_M = 200;
+const PASS_JUMP_M = 500;
 // Phones at 3x draw more than twice the pixels of 2x for little visible gain.
 const MAX_PIXEL_RATIO =
 	typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
@@ -212,7 +215,10 @@ function LiveMapPage() {
 	const selectedBus = buses.find((bus) => bus.bus.bus_id === selectedBusId) ?? null;
 	const stopsAhead =
 		selectedBus && busSheetOpen && now > 0 ? tracker.stopsAheadOf(selectedBus.bus.bus_id, now) : [];
-	const arrivals = selectedStop && now > 0 ? tracker.arrivalsAt(selectedStop.id, now) : [];
+	const arrivals = useMemo(
+		() => (selectedStop && now > 0 ? tracker.arrivalsAt(selectedStop.id, now) : []),
+		[selectedStop, now, tracker],
+	);
 	// One bus gets its road drawn, the one the stop card is showing, else the
 	// soonest; a bus a full loop away would cover the route.
 	const nextArrival =
@@ -257,6 +263,27 @@ function LiveMapPage() {
 		},
 		[followBus],
 	);
+	// Once the card's bus passes the stop, the card moves on to the soonest
+	// other bus, or closes when no other is coming.
+	const cardArrival = cardStopId === null ? null : nextArrival;
+	const lastCardArrival = useRef<{ stopId: number; busId: number; meters: number } | null>(null);
+	useEffect(() => {
+		const seen = lastCardArrival.current;
+		lastCardArrival.current =
+			cardStopId !== null && cardArrival
+				? { stopId: cardStopId, busId: cardArrival.bus.bus_id, meters: cardArrival.metersAhead }
+				: null;
+		if (!seen || seen.stopId !== cardStopId || seen.meters > PASS_NEAR_M) return;
+
+		const again = arrivals.find((arrival) => arrival.bus.bus_id === seen.busId);
+		if (again && again.metersAhead < seen.meters + PASS_JUMP_M) return;
+
+		if (arrivals.some((arrival) => !arrival.stale && arrival.bus.bus_id !== seen.busId)) {
+			setStopCardBus({ stopId: seen.stopId, busId: null });
+		} else {
+			setSelectedStopId(null);
+		}
+	}, [arrivals, cardArrival, cardStopId]);
 	const changeBusSheet = useCallback((open: boolean) => {
 		setBusSheetOpen(open);
 		if (!open) setFollowRequest(null);
@@ -1520,7 +1547,7 @@ function StopCard({
 								onTouchStart={(event) => event.stopPropagation()}
 							>
 								<div className="stop-card-content" data-state={entered ? "open" : "opening"}>
-									<StopPanel stop={shown} arrivals={arrivals} {...panel} />
+									<StopPanel stop={shown} arrivals={arrivals} roadBusId={roadBusId} {...panel} />
 								</div>
 							</PanelGlass>
 						</div>
@@ -1542,9 +1569,11 @@ function StopPanel({
 	onLocate,
 	onShowBus,
 	onClose,
+	roadBusId,
 }: {
 	stop: BusStop;
 	arrivals: StopArrival[];
+	roadBusId: number | null;
 	settling: boolean;
 	now: number;
 	userPosition: LngLat | null;
@@ -1576,6 +1605,11 @@ function StopPanel({
 			carousel.off("select", onSelect);
 		};
 	}, [carousel]);
+
+	// Back to the soonest bus once the one shown has passed the stop.
+	useEffect(() => {
+		if (roadBusId === null) carousel?.scrollTo(0);
+	}, [carousel, roadBusId]);
 
 	const locate = () => {
 		if (!("geolocation" in navigator)) return;
