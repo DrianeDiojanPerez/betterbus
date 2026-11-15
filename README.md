@@ -3,7 +3,6 @@
 <h3 align="center">E-Bus: a live map of the electric buses in Belize City</h3>
 
 - [Run it](#run-it)
-- [The bus feed](#the-bus-feed)
 - [Check your work](#check-your-work)
 - [Docs](#docs)
 
@@ -16,15 +15,6 @@ npm run dev
 ```
 
 Then open http://localhost:3000.
-
-## The bus feed
-
-The app reads the buses from one URL, set as `LIVE_MAP_FEED_URL` in `.env`:
-
-- **Real feed:** `https://bus.techtingz.bz/live-map/data`. This is also what you get when the line is left out.
-- **Replay feed:** `http://localhost:4545/live-map/data`, for when the buses are off. Start it in its own terminal with `node ~/bus-recordings/replay-feed.mjs`.
-
-Restart `npm run dev` after you change `.env`.
 
 ## Check your work
 
