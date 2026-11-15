@@ -14,7 +14,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Then open http://localhost:3000.
+Fill in `LIVE_MAP_FEED_URL` in `.env` before `npm run dev`. Then open http://localhost:3000.
 
 ## Check your work
 

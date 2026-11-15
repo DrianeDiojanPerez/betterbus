@@ -32,7 +32,7 @@ In `.env`:
 LIVE_MAP_FEED_URL=http://localhost:4545/live-map/data
 ```
 
-Restart `npm run dev`. To go back to the real buses, set it to `https://bus.techtingz.bz/live-map/data` or delete the line.
+Restart `npm run dev`. To go back to the real buses, set it back to the real feed URL.
 
 ## Adding a day
 
