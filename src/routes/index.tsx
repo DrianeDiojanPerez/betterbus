@@ -1858,11 +1858,6 @@ function StopPanel({
 							))}
 						</div>
 					) : null}
-					{walkSeconds === null || rider ? null : (
-						<span className="pt-3 text-xs text-muted-foreground" suppressHydrationWarning>
-							About {formatMinutes(walkSeconds)} walk from you. Leave times allow for it.
-						</span>
-					)}
 				</div>
 			)}
 		</div>
@@ -1911,11 +1906,15 @@ function ArrivalSlide({
 					</span>
 				</span>
 				{walkSeconds !== null ? (
-					etaSeconds !== null && !stale ? (
-						<span className="shrink-0 font-medium tabular-nums">
-							<TextMorph>{formatLeave(etaSeconds - walkSeconds)}</TextMorph>
-						</span>
-					) : null
+					// The walk sits under the leave time it is already counted in.
+					<span className="flex shrink-0 flex-col items-end tabular-nums" suppressHydrationWarning>
+						{etaSeconds !== null && !stale ? (
+							<span className="font-medium">
+								<TextMorph>{formatLeave(etaSeconds - walkSeconds)}</TextMorph>
+							</span>
+						) : null}
+						<span className="text-muted-foreground">{formatMinutes(walkSeconds)} walk</span>
+					</span>
 				) : (
 					walkButton
 				)}
