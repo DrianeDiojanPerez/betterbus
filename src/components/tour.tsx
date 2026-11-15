@@ -13,8 +13,17 @@ import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { PanelGlass } from "@/components/panel-glass";
+import {
+	AlertDialog,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { haptic } from "@/lib/haptics";
+import { useLiquidGlass, usePanelTheme } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 
 /*
@@ -327,4 +336,67 @@ export function useTour() {
 	if (!context) throw new Error("useTour needs a TourProvider above it");
 
 	return context;
+}
+
+export function TourWelcome({
+	open,
+	onOpenChange,
+	title,
+	description,
+	icon,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	title: string;
+	description: string;
+	icon: ReactNode;
+}) {
+	const { start, end, done, active, steps } = useTour();
+	const panelTheme = usePanelTheme();
+	const liquidGlass = useLiquidGlass();
+
+	if (done || active || steps.length === 0) return null;
+
+	return (
+		<AlertDialog open={open} onOpenChange={onOpenChange}>
+			<AlertDialogContent
+				size="sm"
+				glass={liquidGlass ? panelTheme : "frosted"}
+				className={panelTheme === "dark" ? "dark" : "light"}
+			>
+				<AlertDialogHeader>
+					<motion.div
+						initial={{ scale: 0.7, filter: "blur(8px)" }}
+						animate={{ scale: 1, filter: "blur(0px)" }}
+						transition={{ duration: 0.4, ease: "easeOut" }}
+						className="mb-2 flex"
+					>
+						{icon}
+					</motion.div>
+					<AlertDialogTitle>{title}</AlertDialogTitle>
+					<AlertDialogDescription>{description}</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<Button
+						variant="ghost"
+						onClick={() => {
+							onOpenChange(false);
+							end();
+						}}
+					>
+						Skip
+					</Button>
+					<Button
+						variant="outline"
+						onClick={() => {
+							onOpenChange(false);
+							start();
+						}}
+					>
+						Show me around
+					</Button>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
+	);
 }

@@ -1,12 +1,9 @@
-import {
-	Monitor,
-	Moon,
-	Settings2,
-	Sun,
-	X,
-} from "lucide-react";
+import { Map as MapIcon, Monitor, Moon, Settings2, Sun, X } from "lucide-react";
+import { useState } from "react";
 
 import { PanelGlass } from "@/components/panel-glass";
+import { useTour } from "@/components/tour";
+import { Button } from "@/components/ui/button";
 
 import {
 	Drawer,
@@ -44,9 +41,17 @@ export function MapSettings({ className }: { className?: string }) {
 	const settings = useSettings();
 	const panelTheme = usePanelTheme();
 	const liquidGlass = useLiquidGlass();
+	const tour = useTour();
+	const [open, setOpen] = useState(false);
 
 	return (
-		<Drawer modal={false} disablePointerDismissal showSwipeHandle>
+		<Drawer
+			open={open}
+			onOpenChange={setOpen}
+			modal={false}
+			disablePointerDismissal
+			showSwipeHandle
+		>
 			<PanelGlass
 				className={cn(
 					"flex flex-col overflow-hidden rounded-full text-foreground [&>button+button]:border-t [&>button+button]:border-border/60",
@@ -155,6 +160,19 @@ export function MapSettings({ className }: { className?: string }) {
 							))}
 						</div>
 					</section>
+					<Button
+						variant="outline"
+						className="self-start"
+						onClick={() => {
+							haptic("light");
+							setOpen(false);
+							// Once the drawer is down, so the tour points at a clear map.
+							window.setTimeout(tour.start, 400);
+						}}
+					>
+						<MapIcon data-icon="inline-start" />
+						Show me around
+					</Button>
 				</div>
 			</DrawerContent>
 		</Drawer>

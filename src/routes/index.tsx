@@ -15,9 +15,11 @@ import { TextMorph } from "torph/react";
 
 import { FollowBus } from "@/components/follow-bus";
 import { MapFirstDraw } from "@/components/map-first-draw";
+import { MapTour, TOUR_STORAGE_KEY } from "@/components/map-tour";
 import { NearestStop, nearestStop } from "@/components/nearest-stop";
 import { PanelGlass } from "@/components/panel-glass";
 import { RoadAhead } from "@/components/road-ahead";
+import { TourProvider, useTour } from "@/components/tour";
 import { ArrivalsSkeleton, StopsAheadSkeleton } from "@/components/live-map-skeleton";
 import { Map3dToggle } from "@/components/map-3d-toggle";
 import { MapCameraVars } from "@/components/map-camera-vars";
@@ -93,8 +95,16 @@ export const Route = createFileRoute("/")({
 		stop: finite(search.stop),
 	}),
 	// No loader on purpose: the browser fetches the feed after the page lands.
-	component: LiveMapPage,
+	component: LiveMap,
 });
+
+function LiveMap() {
+	return (
+		<TourProvider storageKey={TOUR_STORAGE_KEY}>
+			<LiveMapPage />
+		</TourProvider>
+	);
+}
 
 const BELIZE_CITY: [number, number] = [-88.19, 17.5];
 const DEFAULT_ZOOM = 13.5;
@@ -316,7 +326,9 @@ function LiveMapPage() {
 		setNearestRequest((request) => request + 1);
 	}, []);
 	// A link to a stop opens that stop, so finding the rider then only places their dot.
-	useLocateOnOpen(feedShown && routes.length > 0, (coords) => {
+	// A first visit takes the tour, or skips it, before being asked where it is.
+	const tour = useTour();
+	useLocateOnOpen(feedShown && routes.length > 0 && tour.done, (coords) => {
 		if (view.stop === undefined) handleLocate(coords);
 		else setUserPosition([coords.longitude, coords.latitude]);
 	});
@@ -402,6 +414,7 @@ function LiveMapPage() {
 							/>
 							<Map3dToggle enabled={threeD} onEnabledChange={setThreeD} />
 							<MapSettings />
+							<MapTour ready={feedShown} />
 						</div>
 					}
 				>
@@ -689,6 +702,7 @@ function toPairs(points: { lng: number; lat: number }[]): [number, number][] {
 function StopDot({ selected, entering }: { selected: boolean; entering: boolean }) {
 	return (
 		<div
+			data-tour="stop"
 			className={cn(
 				"relative transition-select before:absolute before:-inset-4 before:rounded-full",
 				entering && ENTER_ZOOM,
@@ -706,7 +720,7 @@ function StopPin({ selected, entering }: { selected: boolean; entering: boolean 
 	const post = selected ? "h-5 w-1 bg-stop" : "h-4 w-[3px] bg-stop";
 
 	return (
-		<div className={cn("relative size-4 preserve-3d", entering && ENTER)}>
+		<div data-tour="stop" className={cn("relative size-4 preserve-3d", entering && ENTER)}>
 			<div
 				className={cn(
 					"absolute inset-0 rounded-full blur-xs transition-select",
@@ -990,6 +1004,7 @@ function BusCard({
 
 	return (
 		<PanelGlass
+			data-tour="bus"
 			className={cn(
 				// Its layout is its own, so the hover spring reflows only the card, not the page.
 				"group flex w-max cursor-pointer flex-col rounded-2xl px-3 py-1.5 text-xs text-foreground transition-morph delay-75 spring-reverse contain-layout hover:rounded-3xl hover:px-3.5 hover:py-2.5 hover:brightness-105 hover:delay-0 hover:spring active:scale-95",
