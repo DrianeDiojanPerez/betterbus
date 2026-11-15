@@ -1,4 +1,6 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
+
+import { PanelGlass } from "@/components/panel-glass";
 
 import { useMap } from "@/components/ui/map";
 import { cn } from "@/lib/utils";
@@ -21,6 +23,7 @@ export function Map3dToggle({
 	className?: string;
 }) {
 	const { map } = useMap();
+	const [press, setPress] = useState<{ x: number; y: number } | null>(null);
 
 	useEffect(() => {
 		if (!map) return;
@@ -59,26 +62,40 @@ export function Map3dToggle({
 	}, [map, enabled, onEnabledChange]);
 
 	return (
-		<div
+		<PanelGlass
 			className={cn(
-				"flex flex-col overflow-hidden rounded-full text-foreground glass [&>button+button]:border-t [&>button+button]:border-border/60",
+				"flex flex-col overflow-hidden rounded-full text-foreground [&>button+button]:border-t [&>button+button]:border-border/60",
 				className,
 			)}
 		>
 			<button
 				type="button"
 				onClick={toggle}
+				onPointerDown={(event) => {
+					const box = event.currentTarget.getBoundingClientRect();
+					setPress({ x: event.clientX - box.left, y: event.clientY - box.top });
+				}}
+				onPointerUp={() => setPress(null)}
+				onPointerLeave={() => setPress(null)}
+				onPointerCancel={() => setPress(null)}
+				data-pressed={press ? "" : undefined}
+				style={
+					press
+						? ({ "--press-x": `${press.x}px`, "--press-y": `${press.y}px` } as React.CSSProperties)
+						: undefined
+				}
 				aria-pressed={enabled}
 				aria-label={enabled ? "Turn 3D view off" : "Turn 3D view on"}
 				title={enabled ? "Back to flat map" : "Tilt with right-drag"}
 				className={cn(
-					"flex size-11 items-center justify-center text-sm font-semibold transition-all active:scale-90",
+					"press-light flex size-11 items-center justify-center text-sm font-semibold",
 					"focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset",
-					enabled ? "bg-foreground text-background" : "hover:bg-foreground/5",
+					// On is a clear tint, like glisse's selection, rather than a solid disc.
+					enabled ? "bg-foreground/25 text-foreground" : "hover:bg-foreground/5",
 				)}
 			>
 				3D
 			</button>
-		</div>
+		</PanelGlass>
 	);
 }

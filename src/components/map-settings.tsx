@@ -1,4 +1,12 @@
-import { Monitor, Moon, Settings2, Sun, X } from "lucide-react";
+import {
+	Monitor,
+	Moon,
+	Settings2,
+	Sun,
+	X,
+} from "lucide-react";
+
+import { PanelGlass } from "@/components/panel-glass";
 
 import {
 	Drawer,
@@ -13,10 +21,13 @@ import {
 	MAP_STYLE_OPTIONS,
 	THEME_OPTIONS,
 	updateSettings,
+	useLiquidGlass,
+	usePanelTheme,
 	useSettings,
 	type MapStyleSetting,
 	type ThemeSetting,
 } from "@/lib/settings";
+import { haptic } from "@/lib/haptics";
 import { cn } from "@/lib/utils";
 
 const THEME_ICONS: Record<ThemeSetting, React.ReactNode> = {
@@ -31,12 +42,14 @@ const THEME_ICONS: Record<ThemeSetting, React.ReactNode> = {
  */
 export function MapSettings({ className }: { className?: string }) {
 	const settings = useSettings();
+	const panelTheme = usePanelTheme();
+	const liquidGlass = useLiquidGlass();
 
 	return (
 		<Drawer modal={false} disablePointerDismissal showSwipeHandle>
-			<div
+			<PanelGlass
 				className={cn(
-					"flex flex-col overflow-hidden rounded-full text-foreground glass [&>button+button]:border-t [&>button+button]:border-border/60",
+					"flex flex-col overflow-hidden rounded-full text-foreground [&>button+button]:border-t [&>button+button]:border-border/60",
 					className,
 				)}
 			>
@@ -55,8 +68,15 @@ export function MapSettings({ className }: { className?: string }) {
 				>
 					<Settings2 className="size-5" />
 				</DrawerTrigger>
-			</div>
-			<DrawerContent className="sm:mx-auto sm:w-full sm:max-w-xl">
+			</PanelGlass>
+			<DrawerContent
+				liquidGlass={liquidGlass ? panelTheme : undefined}
+				className={
+					panelTheme === "dark"
+						? "dark sm:mx-auto sm:w-full sm:max-w-xl"
+						: "light sm:mx-auto sm:w-full sm:max-w-xl"
+				}
+			>
 				<DrawerHeader className="relative">
 					<div className="flex flex-col gap-1 pr-10 text-left">
 						<DrawerTitle>Settings</DrawerTitle>
@@ -91,7 +111,10 @@ export function MapSettings({ className }: { className?: string }) {
 										type="button"
 										role="radio"
 										aria-checked={selected}
-										onClick={() => updateSettings({ theme: option.value })}
+										onClick={() => {
+											haptic("selection");
+											updateSettings({ theme: option.value });
+										}}
 										className={cn(
 											"flex flex-col items-center gap-1 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring [&>svg]:size-5",
 											selected
@@ -124,7 +147,10 @@ export function MapSettings({ className }: { className?: string }) {
 									label={option.label}
 									hint={option.hint}
 									selected={settings.mapStyle === option.value}
-									onSelect={() => updateSettings({ mapStyle: option.value })}
+									onSelect={() => {
+										haptic("selection");
+										updateSettings({ mapStyle: option.value });
+									}}
 								/>
 							))}
 						</div>

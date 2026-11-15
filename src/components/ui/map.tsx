@@ -23,6 +23,8 @@ import { X, Minus, Plus, Locate, Maximize, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
+import { PanelGlass } from "@/components/panel-glass";
+
 type MapLibreModule = typeof MapLibreGL;
 
 let maplibrePromise: Promise<MapLibreModule> | null = null;
@@ -883,9 +885,9 @@ const positionClasses = {
 
 function ControlGroup({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="flex flex-col overflow-hidden rounded-full text-foreground glass [&>button+button]:border-t [&>button+button]:border-border/60">
+		<PanelGlass className="flex flex-col overflow-hidden rounded-full text-foreground [&>button+button]:border-t [&>button+button]:border-border/60">
 			{children}
-		</div>
+		</PanelGlass>
 	);
 }
 

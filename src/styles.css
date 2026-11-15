@@ -3,7 +3,9 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 
-@custom-variant dark (&:is(.dark *));
+/* A .light subtree inside dark mode opts back out, so panels can take the
+   opposite theme to the map. */
+@custom-variant dark (&:is(.dark *):not(.light, .light *));
 
 @theme inline {
 	--font-heading: var(--font-sans);
@@ -56,7 +58,8 @@
 	--radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
+:root,
+.light {
 	--background: oklch(1 0 0);
 	--foreground: oklch(0.141 0.005 285.823);
 	--card: oklch(1 0 0);
@@ -75,7 +78,8 @@
 	--stop: oklch(0.769 0.188 70.08);
 	--stop-active: oklch(0.645 0.246 16.439);
 	--here: oklch(0.696 0.17 162.48);
-	--glass: rgb(255 255 255 / 0.82);
+	/* A warm off-white: pure white glass over a bright map glares. */
+	--glass: rgb(250 248 244 / 0.84);
 	--glass-edge: rgb(255 255 255 / 0.7);
 	--glass-sheen: rgb(255 255 255 / 0.85);
 	--glass-underlight: rgb(255 255 255 / 0.35);
@@ -160,13 +164,167 @@
 	}
 }
 
+/* In dark mode the panels over the map are light, dressed after glisse's take on
+   iOS 26 (github.com/0kzh/glisse): its label and separator colours, its menu
+   material for big surfaces and its glass buttons. The small floating pieces
+   use glisse's own Glass. */
+.light {
+	--foreground: rgb(0 0 0 / 0.88);
+	--card-foreground: rgb(0 0 0 / 0.88);
+	--popover-foreground: rgb(0 0 0 / 0.88);
+	--accent-foreground: rgb(0 0 0 / 0.88);
+	--secondary-foreground: rgb(0 0 0 / 0.88);
+	--muted-foreground: rgb(60 60 67 / 0.6);
+	--muted: rgb(60 60 67 / 0.09);
+	--accent: rgb(60 60 67 / 0.09);
+	--secondary: rgb(118 118 128 / 0.12);
+	--border: rgb(60 60 67 / 0.15);
+	--input: rgb(60 60 67 / 0.15);
+	--ring: rgb(0 0 0 / 0.4);
+	--destructive: #ff383c;
+	/* glisse's light glass fill, so a drawer's overscroll bleed matches its panel. */
+	--glass: rgb(255 255 255 / 0.6);
+	--glass-edge: rgb(0 0 0 / 0.08);
+}
+
+/* Light frosted panels, for riders who turn Liquid Glass off: glisse's thicker
+   menu material, so text reads well over the dark map. */
+.glass:is(.light, .light *) {
+	background-color: rgb(250 250 252 / 0.86);
+	backdrop-filter: blur(22px) saturate(1.9);
+	box-shadow:
+		inset 0 0 0 0.5px var(--glass-edge),
+		0 12px 40px rgb(25 25 35 / 0.12);
+}
+
+/* A press as glisse does it: the button lights up at once under the finger,
+   with a soft glow centred where it was touched (--press-x, --press-y), and
+   fades back over 220ms on release. No shrink, so no square corners show. */
+@utility press-light {
+	position: relative;
+	border-radius: 9999px;
+	-webkit-tap-highlight-color: transparent;
+	transition: background-color 200ms ease;
+
+	&::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+		background: radial-gradient(
+			circle 60px at var(--press-x, 50%) var(--press-y, 50%),
+			color-mix(in oklab, var(--foreground) 22%, transparent),
+			transparent
+		);
+		opacity: 0;
+		transition: opacity 220ms ease-in-out;
+	}
+
+	&[data-pressed] {
+		transition-duration: 0s;
+	}
+
+	&[data-pressed]::after {
+		opacity: 1;
+		transition-duration: 0s;
+	}
+}
+
+/* glisse's Glass, tuned as in its demo: bend 0.19, dispersion 2, frost 8px,
+   rim 1. Every panel over the map takes these. */
+.lg-glass[data-theme] {
+	--lg-glass-bend: 0.19;
+	--lg-glass-dispersion: 2;
+	--lg-blur: 8px;
+	--lg-rim-shine: 1;
+}
+
+/* At full shine the dark tint's rim reads as a white border, so it keeps
+   glisse's own dark default. */
+.lg-glass[data-theme="dark"] {
+	--lg-rim-shine: 0.13;
+}
+
+/* glisse's stylesheet pins its glass to position: relative, which would pull
+   fixed and absolutely placed panels out of place. Two classes outrank it. */
+.lg-glass.fixed {
+	position: fixed;
+}
+
+.lg-glass.absolute {
+	position: absolute;
+}
+
+/* glisse draws its lit rim all the way round, so a Liquid Glass drawer runs on
+   past the bottom of the screen to hide the rim's bottom edge. */
+.lg-glass[data-slot="drawer-popup"][data-swipe-direction="down"] {
+	box-sizing: content-box;
+	padding-bottom: 1.5rem;
+	margin-bottom: -1.5rem;
+}
+
+.light [data-slot="button"]:is([data-variant="outline"], [data-variant="secondary"]) {
+	border-color: transparent;
+	border-radius: 9999px;
+	background-color: rgb(255 255 255 / 0.6);
+	backdrop-filter: blur(3px) saturate(1.5);
+	box-shadow:
+		inset 0 0 0 0.5px rgb(0 0 0 / 0.08),
+		0 1px 3px rgb(0 0 0 / 0.06);
+	transition: background-color 200ms ease;
+
+	&:active {
+		background-color: rgb(236 236 240 / 0.85);
+		transition-duration: 0s;
+	}
+
+	@media (hover: hover) and (pointer: fine) {
+		&:hover {
+			background-color: rgb(236 236 240 / 0.85);
+		}
+	}
+}
+
+.light [data-slot="button"][data-variant="ghost"] {
+	border-radius: 9999px;
+}
+
+/* Settings' choice rows, as glisse's segmented control: a grey track and a
+   white thumb with iOS's lift. */
+.light [role="radiogroup"] {
+	background-color: rgb(118 118 128 / 0.12);
+
+	& > [role="radio"][aria-checked="true"] {
+		background-color: #fff;
+		box-shadow:
+			0 3px 8px rgb(0 0 0 / 0.12),
+			0 3px 1px rgb(0 0 0 / 0.04);
+	}
+}
+
+/* Light maps are mostly white roads and land. A touch dimmer and warmer reads
+   like paper rather than glare. The dark maps are left as they are. */
+html:not(.dark) .maplibregl-canvas {
+	filter: brightness(0.94) sepia(0.06) saturate(1.05);
+}
+
+/* Positron, which Slate and Night also use by day, is nearly all white and pale
+   grey, so it gets a stronger, warmer step down. */
+html:not(.dark)
+	:is([data-map-style="positron"], [data-map-style="slate"], [data-map-style="night"])
+	.maplibregl-canvas {
+	filter: brightness(0.88) sepia(0.12) saturate(1.1);
+}
+
 /* Frosted glass for controls floating over the map: a translucent fill, a
-   deep blur, a hairline edge and a lit top edge. */
+   deep blur, a hairline edge and a lit top edge. The edge is a ring, not a
+   border, so a panel keeps the same size as its Liquid Glass version. */
 @utility glass {
 	background: var(--glass);
 	backdrop-filter: blur(28px) saturate(200%) brightness(1.06);
-	border: 1px solid var(--glass-edge);
 	box-shadow:
+		inset 0 0 0 1px var(--glass-edge),
 		inset 0 1px 0 var(--glass-sheen),
 		inset 0 -1px 0 var(--glass-underlight),
 		0 1px 1px rgb(0 0 0 / 0.04),

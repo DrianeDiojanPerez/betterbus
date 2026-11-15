@@ -1,5 +1,6 @@
 import * as React from "react";
 import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
+import { Glass } from "glisse";
 import { cn } from "cn";
 
 import { Button } from "@/components/ui/button";
@@ -40,20 +41,25 @@ function SheetContent({
 	side = "right",
 	showCloseButton = true,
 	showOverlay = true,
+	liquidGlass,
 	...props
 }: SheetPrimitive.Popup.Props & {
 	side?: "top" | "right" | "bottom" | "left";
 	showCloseButton?: boolean;
 	showOverlay?: boolean;
+	/** Makes the panel itself glisse's Liquid Glass, in this tint, instead of frosted glass. */
+	liquidGlass?: "light" | "dark";
 }) {
 	return (
 		<SheetPortal>
 			{showOverlay && <SheetOverlay />}
 			<SheetPrimitive.Popup
+				render={liquidGlass ? <Glass data-theme={liquidGlass} /> : undefined}
 				data-slot="sheet-content"
 				data-side={side}
 				className={cn(
-					"fixed z-50 flex flex-col gap-4 overflow-hidden text-sm text-foreground glass transition duration-200 ease-in-out data-ending-style:opacity-0 data-starting-style:opacity-0 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-3 data-[side=left]:left-3 data-[side=left]:w-3/4 data-[side=left]:rounded-2xl data-[side=left]:data-ending-style:translate-x-[-2.5rem] data-[side=left]:data-starting-style:translate-x-[-2.5rem] data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:data-ending-style:translate-x-[2.5rem] data-[side=right]:data-starting-style:translate-x-[2.5rem] data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem] data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm",
+					"fixed z-50 flex flex-col gap-4 overflow-hidden text-sm text-foreground transition duration-200 ease-in-out data-ending-style:opacity-0 data-starting-style:opacity-0 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-3 data-[side=left]:left-3 data-[side=left]:w-3/4 data-[side=left]:rounded-2xl data-[side=left]:data-ending-style:translate-x-[-2.5rem] data-[side=left]:data-starting-style:translate-x-[-2.5rem] data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:data-ending-style:translate-x-[2.5rem] data-[side=right]:data-starting-style:translate-x-[2.5rem] data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem] data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm",
+					!liquidGlass && "glass",
 					className,
 				)}
 				{...props}

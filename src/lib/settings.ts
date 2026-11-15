@@ -4,9 +4,15 @@ export const SETTINGS_STORAGE_KEY = "betterbus-settings";
 
 export type ThemeSetting = "system" | "light" | "dark";
 export type MapStyleSetting = "liberty" | "bright" | "positron" | "colorful" | "slate" | "night";
-export type Settings = { theme: ThemeSetting; mapStyle: MapStyleSetting };
+export type Settings = {
+	theme: ThemeSetting;
+	mapStyle: MapStyleSetting;
+};
 
-export const DEFAULT_SETTINGS: Settings = { theme: "system", mapStyle: "liberty" };
+export const DEFAULT_SETTINGS: Settings = {
+	theme: "system",
+	mapStyle: "liberty",
+};
 
 const STYLE_BASE = "https://tiles.openfreemap.org/styles/";
 
@@ -130,4 +136,14 @@ export function useResolvedTheme(): "light" | "dark" {
 		() => resolveTheme(readSettings().theme),
 		() => "light",
 	);
+}
+
+/** Panels and cards over the map are dark on either map. */
+export function usePanelTheme(): "light" | "dark" {
+	return "dark";
+}
+
+/** Dark Liquid Glass bends the light map; on the dark map the panels are frosted. */
+export function useLiquidGlass(): boolean {
+	return useResolvedTheme() === "light";
 }
