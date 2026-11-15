@@ -244,6 +244,11 @@
    glisse's own dark default. */
 .lg-glass[data-theme="dark"] {
 	--lg-rim-shine: 0.13;
+	/* Over the light map the see-through dark glass turns grey, so its text is
+	   white and its hints nearly so. */
+	--foreground: #fff;
+	--card-foreground: #fff;
+	--muted-foreground: rgb(255 255 255 / 0.8);
 }
 
 /* glisse's stylesheet pins its glass to position: relative, which would pull
