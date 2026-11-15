@@ -416,23 +416,13 @@ function LiveMapPage() {
 			<div
 				aria-hidden={feedShown}
 				className={cn(
-					// Kept on its own layer: when it drops off at the end of the fade, Chrome redraws the
-					// glass cards under it and they flash.
-					"absolute inset-0 z-50 flex transform-gpu items-center justify-center transition-opacity duration-1000 ease-out will-change-[opacity]",
-					feedShown ? "opacity-0" : "opacity-100",
+					"absolute inset-0 z-50 flex items-center justify-center bg-background transition-opacity duration-1000 ease-out",
+					// Solid until the map has drawn, see-through while the buses load, then gone.
+					feedShown ? "opacity-0" : mapShown ? "opacity-60" : "opacity-100",
 					// Holds the map still, drags and wheel included, until the overlay is on its way out.
 					feedShown ? "pointer-events-none" : "touch-none",
 				)}
 			>
-				{/* Solid until the map has drawn, then see-through. Two layers that only fade
-				    their opacity, which the GPU does without repainting the screen. */}
-				<div className="absolute inset-0 bg-background/60" />
-				<div
-					className={cn(
-						"absolute inset-0 bg-background transition-opacity duration-1000 ease-out will-change-[opacity]",
-						mapShown ? "opacity-0" : "opacity-100",
-					)}
-				/>
 				<div className="relative flex loading-dots gap-1.5">
 					<span className="size-2 rounded-full bg-muted-foreground" />
 					<span className="size-2 rounded-full bg-muted-foreground" />

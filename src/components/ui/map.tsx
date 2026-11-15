@@ -254,8 +254,6 @@ type MapProps = {
 	overlay?: React.ReactNode;
 } & Omit<MapLibreGL.MapOptions, "container" | "style">;
 
-const FIRST_DRAW_FADE_MS = 700;
-
 function DefaultLoader({ visible, onHidden }: { visible: boolean; onHidden: () => void }) {
 	return (
 		<div
@@ -373,10 +371,10 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
 				if (!instance.painter) throw new lib.GPUInitializationError({}, null);
 				map = instance;
 
-				// The first frame fades in rather than popping over the page.
+				// Hidden until the first full draw. No fade of its own: the page's loading
+				// overlay fades over it, and two fades at once flickered in Firefox.
 				const canvas = instance.getCanvas();
 				canvas.style.opacity = "0";
-				canvas.style.transition = `opacity ${FIRST_DRAW_FADE_MS}ms ease-out`;
 
 				// Track load state
 				instance.on("load", () => {
